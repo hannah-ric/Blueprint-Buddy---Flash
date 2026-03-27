@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, FormEvent } from "react";
 import { Send, Loader2, User, Bot, Layout } from "lucide-react";
 import { motion } from "motion/react";
 import Markdown from "react-markdown";
@@ -38,7 +38,7 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
     }
   }, [messages]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (input.trim() && !isLoading) {
       onSendMessage(input);
@@ -48,7 +48,7 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
 
   return (
     <div className={cn("flex flex-col h-full bg-white border-r border-gray-200 w-full md:max-w-md shrink-0", className)}>
-      <div className="p-4 border-bottom border-gray-100 bg-gray-50">
+      <div className="p-4 border-b border-gray-100 bg-gray-50">
         <h2 className="text-lg font-semibold text-gray-800 italic serif">Blueprint Buddy</h2>
         <p className="text-xs text-gray-500 font-mono uppercase tracking-wider">AI Design Assistant</p>
       </div>

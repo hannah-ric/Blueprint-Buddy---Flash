@@ -28,6 +28,7 @@ export function PlanDetails({ plan }: PlanDetailsProps) {
     a.href = url;
     a.download = filename;
     a.click();
+    window.URL.revokeObjectURL(url);
   };
 
   return (

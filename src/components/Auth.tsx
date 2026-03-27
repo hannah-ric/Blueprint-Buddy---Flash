@@ -1,8 +1,6 @@
 import { signInWithPopup, GoogleAuthProvider, signOut, User } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { LogIn, LogOut } from "lucide-react";
-import { motion } from "motion/react";
-
 interface AuthProps {
   user: User | null;
 }
@@ -10,7 +8,9 @@ interface AuthProps {
 export function Auth({ user }: AuthProps) {
   const handleLogin = () => {
     const provider = new GoogleAuthProvider();
-    signInWithPopup(auth, provider);
+    signInWithPopup(auth, provider).catch((error) => {
+      console.error("Sign-in failed:", error);
+    });
   };
 
   const handleLogout = () => signOut(auth);
