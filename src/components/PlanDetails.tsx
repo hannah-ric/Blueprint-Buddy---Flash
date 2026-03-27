@@ -1,13 +1,16 @@
 import { BuildPlan } from "../types";
-import { Download, FileText, Package, Wrench, Lightbulb } from "lucide-react";
+import { Download, FileText, Package, Wrench, Lightbulb, AlertTriangle, GitCompare, ChevronDown, RotateCcw } from "lucide-react";
 import Markdown from "react-markdown";
 import { motion } from "motion/react";
 
 interface PlanDetailsProps {
   plan: BuildPlan;
+  planVersions?: BuildPlan[];
+  onSelectVersion?: (version: number) => void;
+  onRevertToVersion?: (version: number) => void;
 }
 
-export function PlanDetails({ plan }: PlanDetailsProps) {
+export function PlanDetails({ plan, planVersions, onSelectVersion, onRevertToVersion }: PlanDetailsProps) {
   const downloadCSV = (type: 'cutlist' | 'bom') => {
     let content = "";
     let filename = "";
@@ -17,8 +20,10 @@ export function PlanDetails({ plan }: PlanDetailsProps) {
         plan.cutList.map(item => `${item.part},${item.quantity},${item.thickness},${item.width},${item.length},${item.material}`).join("\n");
       filename = `${plan.name.replace(/\s+/g, '_')}_cutlist.csv`;
     } else {
-      content = "Item,Quantity,Unit,Estimated Cost\n" + 
-        plan.bom.map(item => `${item.item},${item.quantity},${item.unit},${item.estimatedCost}`).join("\n");
+      const totalCost = plan.bom.reduce((sum, item) => sum + item.estimatedCost * item.quantity, 0);
+      content = "Item,Quantity,Unit,Estimated Cost\n" +
+        plan.bom.map(item => `${item.item},${item.quantity},${item.unit},${item.estimatedCost}`).join("\n") +
+        `\nTotal,,,${totalCost.toFixed(2)}`;
       filename = `${plan.name.replace(/\s+/g, '_')}_bom.csv`;
     }
 
@@ -37,6 +42,67 @@ export function PlanDetails({ plan }: PlanDetailsProps) {
       animate={{ opacity: 1 }}
       className="flex-1 overflow-y-auto bg-white p-8 space-y-12"
     >
+      {/* Version Selector */}
+      {planVersions && planVersions.length > 1 && (
+        <div className="flex items-center justify-between bg-gray-50 p-3 rounded-xl border border-gray-200">
+          <div className="flex items-center gap-2">
+            <GitCompare size={16} className="text-gray-400" />
+            <span className="text-xs font-mono uppercase tracking-wider text-gray-500">Version</span>
+            <div className="relative">
+              <select
+                value={plan.version ?? planVersions.length}
+                onChange={(e) => onSelectVersion?.(parseInt(e.target.value))}
+                className="text-xs px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-orange-500 pr-6 appearance-none"
+              >
+                {planVersions.map((v, i) => (
+                  <option key={i} value={v.version ?? i + 1}>
+                    v{v.version ?? i + 1}{i === planVersions.length - 1 ? " (latest)" : ""}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={12} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+          {plan.version !== undefined && plan.version < (planVersions.length) && onRevertToVersion && (
+            <button
+              onClick={() => onRevertToVersion(plan.version!)}
+              className="flex items-center gap-1.5 text-xs text-orange-600 hover:text-orange-700 font-medium transition-colors"
+            >
+              <RotateCcw size={12} />
+              Revert to this version
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Warnings */}
+      {plan.warnings && plan.warnings.length > 0 && (
+        <section className="bg-amber-50/50 p-4 rounded-xl border border-amber-200">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle size={16} className="text-amber-600" />
+            <span className="text-sm font-medium text-amber-800">Plan Warnings</span>
+          </div>
+          <ul className="text-xs text-amber-700 space-y-1">
+            {plan.warnings.map((w, i) => (
+              <li key={i} className="flex gap-2"><span className="shrink-0">-</span>{w}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* Change Summary */}
+      {plan.changesSummary && (
+        <section className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+          <div className="flex items-center gap-2 mb-2">
+            <GitCompare size={16} className="text-blue-600" />
+            <span className="text-sm font-medium text-blue-800">Changes from Previous Version</span>
+          </div>
+          <div className="text-sm text-blue-700 leading-relaxed whitespace-pre-wrap">
+            <Markdown>{plan.changesSummary}</Markdown>
+          </div>
+        </section>
+      )}
+
       <section className="space-y-4">
         <div className="flex items-center justify-between border-b border-gray-200 pb-4">
           <h2 className="text-3xl font-light serif italic">Specifications</h2>
@@ -134,6 +200,12 @@ export function PlanDetails({ plan }: PlanDetailsProps) {
               <p className="font-mono text-sm text-gray-600">${item.estimatedCost.toFixed(2)}</p>
             </div>
           ))}
+        </div>
+        <div className="flex items-center justify-between p-4 bg-orange-50 rounded-xl border border-orange-200">
+          <p className="font-medium text-orange-900">Estimated Total</p>
+          <p className="font-mono text-lg font-semibold text-orange-700">
+            ${plan.bom.reduce((sum, item) => sum + item.estimatedCost * item.quantity, 0).toFixed(2)}
+          </p>
         </div>
       </section>
 

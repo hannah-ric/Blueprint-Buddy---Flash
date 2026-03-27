@@ -21,6 +21,7 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentPlan, setCurrentPlan] = useState<BuildPlan | null>(null);
+  const [planVersions, setPlanVersions] = useState<BuildPlan[]>([]);
   const [history, setHistory] = useState<BuildPlan[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"design" | "history">("design");
@@ -69,16 +70,17 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, imageData?: string, imageMimeType?: string) => {
     if (!user) {
-      setMessages(prev => [...prev, 
+      setMessages(prev => [...prev,
         { role: "user", content },
         { role: "model", content: "Please sign in to generate build plans." }
       ]);
       return;
     }
 
-    const newMessages: ChatMessage[] = [...messages, { role: "user", content }];
+    const userMessage: ChatMessage = { role: "user", content, imageData, imageMimeType };
+    const newMessages: ChatMessage[] = [...messages, userMessage];
     setMessages(newMessages);
     setIsLoading(true);
 
@@ -90,13 +92,39 @@ export default function App() {
       }).catch((dbError) => {
         handleFirestoreError(dbError, OperationType.CREATE, "plans");
       });
-      setCurrentPlan(plan);
-      setMessages(prev => [...prev, { role: "model", content: `I've generated a build plan for your ${plan.name}. You can see the details and 3D preview now.`, hasPlan: true }]);
+      const versionNumber = planVersions.length + 1;
+      const versionedPlan = { ...plan, version: versionNumber };
+      setPlanVersions(prev => [...prev, versionedPlan]);
+      setCurrentPlan(versionedPlan);
+
+      let chatContent = `I've generated a build plan for your ${plan.name}. You can see the details and 3D preview now.`;
+      if (plan.changesSummary) {
+        chatContent += `\n\n**Changes made:**\n${plan.changesSummary}`;
+      }
+      if (plan.warnings && plan.warnings.length > 0) {
+        chatContent += `\n\n_Note: ${plan.warnings.length} warning(s) found — see plan details._`;
+      }
+      setMessages(prev => [...prev, { role: "model", content: chatContent, hasPlan: true }]);
     } catch (error) {
       console.error(error);
       setMessages(prev => [...prev, { role: "model", content: "Sorry, I encountered an error generating your plan. Please try again." }]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSelectVersion = (version: number) => {
+    const selected = planVersions.find(v => v.version === version);
+    if (selected) setCurrentPlan(selected);
+  };
+
+  const handleRevertToVersion = (version: number) => {
+    const selected = planVersions.find(v => v.version === version);
+    if (selected) {
+      const revertedPlan = { ...selected, version: planVersions.length + 1 };
+      setPlanVersions(prev => [...prev, revertedPlan]);
+      setCurrentPlan(revertedPlan);
+      setMessages(prev => [...prev, { role: "model", content: `Reverted to version ${version} of the plan.`, hasPlan: true }]);
     }
   };
 
@@ -173,7 +201,12 @@ export default function App() {
                           <ThreeDViewer name={currentPlan.name} parts={currentPlan.modelParts} />
                         </Suspense>
                       </div>
-                      <PlanDetails plan={currentPlan} />
+                      <PlanDetails
+                        plan={currentPlan}
+                        planVersions={planVersions}
+                        onSelectVersion={handleSelectVersion}
+                        onRevertToVersion={handleRevertToVersion}
+                      />
                     </div>
                   ) : (
                     <EmptyState />
@@ -199,7 +232,9 @@ export default function App() {
                 history={history} 
                 isLoading={isHistoryLoading}
                 onSelectPlan={(plan) => {
-                  setCurrentPlan(plan);
+                  const loadedPlan = { ...plan, version: 1 };
+                  setCurrentPlan(loadedPlan);
+                  setPlanVersions([loadedPlan]);
                   setActiveTab("design");
                   setMobileView("plan");
                 }} 

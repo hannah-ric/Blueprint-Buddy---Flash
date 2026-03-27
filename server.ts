@@ -68,8 +68,9 @@ const planSchema = {
         required: ["name", "width", "height", "depth", "x", "y", "z"],
       },
     },
+    changesSummary: { type: Type.STRING, description: "When modifying a previous design, list every specific change made (e.g., 'Increased leg height from 28\" to 32\", updated cut list and modelParts accordingly'). Leave empty for first-time designs." },
   },
-  required: ["name", "description", "designNotes", "dimensions", "material", "joinery", "cutList", "bom", "instructions", "modelParts"],
+  required: ["name", "description", "designNotes", "dimensions", "material", "joinery", "units", "cutList", "bom", "instructions", "modelParts"],
 };
 
 const materialsContext = `\nAVAILABLE MATERIALS:\n${JSON.stringify(MATERIALS, null, 2)}`;
@@ -87,8 +88,11 @@ Document this process in the 'designNotes' field:
 3. Explicitly state any self-corrections made during your thought process (e.g., "Initially considered pocket holes, but changed to dowels for better shear strength on the legs").
 
 If the user asks for modifications (e.g., "make it taller", "change to walnut"), apply them to the previous design context.
+When modifying an existing design, populate the 'changesSummary' field with a bullet-point list of every specific change you made (dimensions changed, parts added/removed, materials swapped, positions adjusted). Be precise with before/after values. For first-time designs, leave changesSummary empty.
 Include a precise cut list, bill of materials (BOM), and step-by-step assembly instructions.
 Ensure all dimensions are realistic and joinery is structurally sound.
+If the user provides a reference image, analyze it for style, proportions, materials, and visible joinery, then incorporate those observations into the design. Describe what you see in the image in your designNotes.
+
 IMPORTANT: Respect the user's preferred units (inches, cm, or mm). If not specified, default to inches.
 All measurements in the cut list and dimensions must use the specified units consistently.
 
@@ -128,19 +132,149 @@ ${materialsContext}${joineryContext}
    - Spans over 36" (90cm) typically require aprons or center supports to prevent sagging.
    - Always account for wood movement across the grain (especially for solid wood tabletops; use figure-8 fasteners, z-clips, or slotted holes).
 
+--- CROSS-REFERENCE & CONSISTENCY RULES ---
+Before finalizing your output, you MUST verify the following:
+
+1. CUT LIST ↔ MODEL PARTS CONSISTENCY:
+   - Every part in the cutList MUST have corresponding entries in modelParts.
+   - For cutList items with quantity > 1, include that many separate entries in modelParts with distinct positions (e.g., 4 legs = 4 modelParts named "Front Left Leg", "Front Right Leg", etc.).
+   - The modelPart dimensions (width, height, depth) must match the cutList dimensions (thickness, width, length) for each part. Map thickness→smallest dimension, width→medium, length→largest as appropriate for part orientation.
+
+2. OVERALL DIMENSIONS CONSISTENCY:
+   - The 'dimensions' field must match the bounding box of all assembled modelParts. Calculate the min/max x, y, z across all parts (accounting for part sizes) and verify the result matches your stated dimensions.
+
+3. BOM COMPLETENESS:
+   - The BOM must include sufficient board feet or sheets to cover all cutList items.
+   - Include ALL hardware referenced in instructions (screws, glue, finish, brackets, etc.).
+   - Every BOM item must have a realistic estimatedCost > 0.
+
+4. INSTRUCTION INTEGRITY:
+   - Assembly instructions must reference parts by the exact names used in the cutList.
+   - Steps should follow a logical assembly order (sub-assemblies before final assembly).
+
 3D MODEL GENERATION:
 You must also generate a simplified 3D representation in the 'modelParts' array.
 Deconstruct the furniture into basic rectangular blocks (e.g., 4 legs, 1 top).
 For each part, provide its dimensions (width, height, depth) and its center position (x, y, z) in 3D space.
-Assume the center of the entire furniture piece is at (0, 0, 0).
-Use the same units for these 3D coordinates as the rest of the plan.`;
+
+3D POSITIONING RULES:
+- The ground plane is at y = 0. Position the furniture so the bottom of the lowest parts (e.g., leg bottoms) sit at y = 0 (meaning the center y of a leg = leg_height / 2).
+- Parts must not overlap in 3D space — verify no two parts occupy the same volume.
+- The center of the assembled furniture should be approximately at x = 0, z = 0.
+- Use the same units for 3D coordinates as the rest of the plan.`;
+}
+
+interface ValidationResult {
+  errors: string[];
+  warnings: string[];
+}
+
+function validatePlan(plan: Record<string, unknown>): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const cutList = plan.cutList as Array<{ part: string; quantity: number; thickness: string; width: string; length: string; material: string }> | undefined;
+  const modelParts = plan.modelParts as Array<{ name: string; width: number; height: number; depth: number; x: number; y: number; z: number }> | undefined;
+  const bom = plan.bom as Array<{ item: string; quantity: number; estimatedCost: number }> | undefined;
+  const instructions = plan.instructions as string[] | undefined;
+
+  if (!cutList?.length) {
+    errors.push("cutList is empty — must contain at least one part.");
+    return { errors, warnings };
+  }
+
+  // 1. Check cutList ↔ modelParts consistency
+  if (modelParts?.length) {
+    // Count expected model parts (accounting for quantity)
+    const expectedPartCount = cutList.reduce((sum, item) => sum + item.quantity, 0);
+    if (modelParts.length !== expectedPartCount) {
+      errors.push(
+        `modelParts count (${modelParts.length}) does not match cutList total quantity (${expectedPartCount}). Each cutList item with quantity N should produce N modelParts with distinct positions.`
+      );
+    }
+
+    // Check that each cutList part name appears in modelParts
+    for (const item of cutList) {
+      const matchingParts = modelParts.filter(
+        (mp) => mp.name.toLowerCase().includes(item.part.toLowerCase()) || item.part.toLowerCase().includes(mp.name.toLowerCase())
+      );
+      if (matchingParts.length === 0) {
+        errors.push(
+          `cutList part "${item.part}" has no matching entry in modelParts. Every cutList part must appear in modelParts.`
+        );
+      }
+    }
+
+    // 2. Check modelPart dimensions roughly match cutList
+    for (const item of cutList) {
+      const matchingPart = modelParts.find(
+        (mp) => mp.name.toLowerCase().includes(item.part.toLowerCase()) || item.part.toLowerCase().includes(mp.name.toLowerCase())
+      );
+      if (matchingPart) {
+        const cutDims = [parseFloat(item.thickness), parseFloat(item.width), parseFloat(item.length)]
+          .filter((d) => !isNaN(d))
+          .sort((a, b) => a - b);
+        const modelDims = [matchingPart.width, matchingPart.height, matchingPart.depth]
+          .sort((a, b) => a - b);
+        if (cutDims.length === 3) {
+          for (let i = 0; i < 3; i++) {
+            const ratio = modelDims[i] / cutDims[i];
+            if (ratio < 0.5 || ratio > 2.0) {
+              warnings.push(
+                `Dimension mismatch for "${item.part}": cutList [${cutDims.join(",")}] vs modelPart [${modelDims.join(",")}]. These should be closely aligned.`
+              );
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Check for overlapping parts (simplified — check if any two parts share the same position)
+    for (let i = 0; i < modelParts.length; i++) {
+      for (let j = i + 1; j < modelParts.length; j++) {
+        const a = modelParts[i];
+        const b = modelParts[j];
+        if (Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01 && Math.abs(a.z - b.z) < 0.01) {
+          warnings.push(
+            `modelParts "${a.name}" and "${b.name}" have identical positions (${a.x}, ${a.y}, ${a.z}). They likely need distinct positions.`
+          );
+        }
+      }
+    }
+  } else {
+    errors.push("modelParts is empty — must contain 3D representations of all cutList parts.");
+  }
+
+  // 4. Check BOM has items
+  if (!bom?.length) {
+    errors.push("BOM is empty — must include wood/materials and hardware.");
+  } else {
+    const hasZeroCost = bom.some((item) => item.estimatedCost <= 0);
+    if (hasZeroCost) {
+      warnings.push("Some BOM items have estimatedCost <= 0. All items should have realistic cost estimates.");
+    }
+  }
+
+  // 5. Check instructions reference cutList part names
+  if (instructions?.length && cutList.length) {
+    const partNames = cutList.map((item) => item.part.toLowerCase());
+    const referencedInInstructions = partNames.some((name) =>
+      instructions.some((step) => step.toLowerCase().includes(name))
+    );
+    if (!referencedInInstructions) {
+      warnings.push("Assembly instructions don't reference any cutList part names. Instructions should use specific part names.");
+    }
+  }
+
+  return { errors, warnings };
 }
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "10mb" }));
 
   // Health check
   app.get("/api/health", (_req, res) => {
@@ -171,10 +305,18 @@ async function startServer() {
     }
 
     try {
-      const contents: Content[] = messages.map((msg: { role: string; content: string }) => ({
-        role: msg.role,
-        parts: [{ text: msg.content }],
-      }));
+      const contents: Content[] = messages.map((msg: { role: string; content: string; imageData?: string; imageMimeType?: string }) => {
+        const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: msg.content }];
+        if (msg.imageData && msg.imageMimeType) {
+          parts.push({
+            inlineData: {
+              mimeType: msg.imageMimeType,
+              data: msg.imageData,
+            },
+          });
+        }
+        return { role: msg.role, parts };
+      });
 
       const response = await ai.models.generateContent({
         model: "gemini-3.1-pro-preview",
@@ -186,12 +328,46 @@ async function startServer() {
         },
       });
 
-      const planData = JSON.parse(response.text);
+      let planData = JSON.parse(response.text);
+      const systemPrompt = buildSystemPrompt(experienceLevel, designStyle);
+
+      // Validate the plan
+      let validation = validatePlan(planData);
+
+      // Auto-retry once if there are errors
+      if (validation.errors.length > 0) {
+        console.log("Plan validation failed, retrying with corrections:", validation.errors);
+        const correctionMessage = `Your previous response had these issues that need fixing:\n${validation.errors.map((e) => `- ${e}`).join("\n")}\n${validation.warnings.length > 0 ? `\nWarnings:\n${validation.warnings.map((w) => `- ${w}`).join("\n")}` : ""}\n\nPlease regenerate the plan with these issues corrected.`;
+
+        const retryContents: Content[] = [
+          ...contents,
+          { role: "model", parts: [{ text: response.text }] },
+          { role: "user", parts: [{ text: correctionMessage }] },
+        ];
+
+        const retryResponse = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: retryContents,
+          config: {
+            systemInstruction: systemPrompt,
+            responseMimeType: "application/json",
+            responseSchema: planSchema,
+          },
+        });
+
+        planData = JSON.parse(retryResponse.text);
+        validation = validatePlan(planData);
+      }
+
+      // Include any remaining warnings in the response
+      const allWarnings = [...validation.errors, ...validation.warnings];
+
       res.json({
         ...planData,
         userId,
         experienceLevel,
         designStyle,
+        warnings: allWarnings.length > 0 ? allWarnings : undefined,
         createdAt: new Date().toISOString(),
       });
     } catch (error) {

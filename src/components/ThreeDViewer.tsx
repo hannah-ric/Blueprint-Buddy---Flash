@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Stage, PerspectiveCamera, Grid, Edges, DragControls } from "@react-three/drei";
+import { OrbitControls, Stage, PerspectiveCamera, Grid, Edges, DragControls, Html } from "@react-three/drei";
 import { Suspense, useState, useRef, useEffect } from "react";
 import { motion } from "motion/react";
 import { ModelPart } from "../types";
@@ -11,7 +11,7 @@ interface ThreeDViewerProps {
   parts?: ModelPart[];
 }
 
-function AnimatedPart({ part, isExploded }: { part: ModelPart, isExploded: boolean }) {
+function AnimatedPart({ part, isExploded, showDimensions }: { part: ModelPart, isExploded: boolean, showDimensions: boolean }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [manualPos, setManualPos] = useState<THREE.Vector3 | null>(null);
@@ -58,18 +58,31 @@ function AnimatedPart({ part, isExploded }: { part: ModelPart, isExploded: boole
         <boxGeometry args={[pw, ph, pd]} />
         <meshStandardMaterial color={isDragging ? "#F4A460" : "#DEB887"} roughness={0.8} />
         <Edges scale={1} threshold={15} color="#8B4513" />
+        {showDimensions && (
+          <Html
+            position={[0, ph / 2 + 1, 0]}
+            center
+            distanceFactor={80}
+            style={{ pointerEvents: "none" }}
+          >
+            <div className="bg-white/90 backdrop-blur px-2 py-1 rounded shadow-sm border border-gray-200 whitespace-nowrap">
+              <p className="text-[9px] font-mono font-semibold text-gray-800 text-center">{part.name}</p>
+              <p className="text-[8px] font-mono text-gray-500 text-center">{pw} x {ph} x {pd}</p>
+            </div>
+          </Html>
+        )}
       </mesh>
     </DragControls>
   );
 }
 
-function DynamicFurniture({ parts, isExploded }: { parts: ModelPart[], isExploded: boolean }) {
+function DynamicFurniture({ parts, isExploded, showDimensions }: { parts: ModelPart[], isExploded: boolean, showDimensions: boolean }) {
   if (!parts || parts.length === 0) return null;
 
   return (
     <group>
       {parts.map((part, i) => (
-        <AnimatedPart key={i} part={part} isExploded={isExploded} />
+        <AnimatedPart key={i} part={part} isExploded={isExploded} showDimensions={showDimensions} />
       ))}
     </group>
   );
@@ -77,6 +90,7 @@ function DynamicFurniture({ parts, isExploded }: { parts: ModelPart[], isExplode
 
 export function ThreeDViewer({ name, parts }: ThreeDViewerProps) {
   const [isExploded, setIsExploded] = useState(false);
+  const [showDimensions, setShowDimensions] = useState(false);
 
   return (
     <motion.div 
@@ -94,7 +108,7 @@ export function ThreeDViewer({ name, parts }: ThreeDViewerProps) {
         <Suspense fallback={null}>
           <Stage environment="city" intensity={0.5}>
             {parts && parts.length > 0 ? (
-              <DynamicFurniture parts={parts} isExploded={isExploded} />
+              <DynamicFurniture parts={parts} isExploded={isExploded} showDimensions={showDimensions} />
             ) : (
               <mesh>
                 <boxGeometry args={[10, 10, 10]} />
@@ -118,13 +132,19 @@ export function ThreeDViewer({ name, parts }: ThreeDViewerProps) {
       </Canvas>
 
       <div className="absolute bottom-6 right-6 flex gap-2">
-        <button 
+        <button
+          onClick={() => setShowDimensions(!showDimensions)}
+          className={cn("px-3 py-1 bg-white/80 backdrop-blur border border-gray-200 rounded text-[10px] uppercase tracking-wider font-semibold hover:bg-white transition-colors", showDimensions ? "opacity-100 border-orange-300 bg-orange-50/80" : "opacity-50")}
+        >
+          Dimensions
+        </button>
+        <button
           onClick={() => setIsExploded(false)}
           className={cn("px-3 py-1 bg-white/80 backdrop-blur border border-gray-200 rounded text-[10px] uppercase tracking-wider font-semibold hover:bg-white transition-colors", !isExploded ? "opacity-100" : "opacity-50")}
         >
           Assembled
         </button>
-        <button 
+        <button
           onClick={() => setIsExploded(true)}
           className={cn("px-3 py-1 bg-white/80 backdrop-blur border border-gray-200 rounded text-[10px] uppercase tracking-wider font-semibold hover:bg-white transition-colors", isExploded ? "opacity-100" : "opacity-50")}
         >
