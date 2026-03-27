@@ -1,13 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "./lib/firebase";
 import { ChatInterface } from "./components/ChatInterface";
-import { ThreeDViewer } from "./components/ThreeDViewer";
 import { PlanDetails } from "./components/PlanDetails";
 import { Auth } from "./components/Auth";
 import { ProjectHistory } from "./components/ProjectHistory";
 import { EmptyState } from "./components/EmptyState";
+
+const ThreeDViewer = lazy(() => import("./components/ThreeDViewer").then(m => ({ default: m.ThreeDViewer })));
 import { BuildPlan, ChatMessage } from "./types";
 import { generateBuildPlan } from "./services/gemini";
 import { Hammer, Layout, Boxes, History, ChevronLeft } from "lucide-react";
@@ -83,14 +84,12 @@ export default function App() {
 
     try {
       const plan = await generateBuildPlan(newMessages, user.uid, experienceLevel, designStyle);
-      try {
-        await addDoc(collection(db, "plans"), {
-          ...plan,
-          createdAt: serverTimestamp()
-        });
-      } catch (dbError) {
+      await addDoc(collection(db, "plans"), {
+        ...plan,
+        createdAt: serverTimestamp(),
+      }).catch((dbError) => {
         handleFirestoreError(dbError, OperationType.CREATE, "plans");
-      }
+      });
       setCurrentPlan(plan);
       setMessages(prev => [...prev, { role: "model", content: `I've generated a build plan for your ${plan.name}. You can see the details and 3D preview now.`, hasPlan: true }]);
     } catch (error) {
@@ -170,7 +169,9 @@ export default function App() {
                   {currentPlan ? (
                     <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                       <div className="w-full md:w-1/2 h-1/2 md:h-full border-r border-gray-200">
-                        <ThreeDViewer name={currentPlan.name} parts={currentPlan.modelParts} />
+                        <Suspense fallback={<div className="w-full h-full bg-[#E4E3E0] flex items-center justify-center text-gray-400 text-sm">Loading 3D viewer...</div>}>
+                          <ThreeDViewer name={currentPlan.name} parts={currentPlan.modelParts} />
+                        </Suspense>
                       </div>
                       <PlanDetails plan={currentPlan} />
                     </div>

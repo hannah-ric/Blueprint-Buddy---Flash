@@ -1,52 +1,34 @@
 import { auth } from "./firebase";
 
 export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
+  CREATE = "create",
+  UPDATE = "update",
+  DELETE = "delete",
+  LIST = "list",
+  GET = "get",
 }
 
 export interface FirestoreErrorInfo {
-  error: string;
+  message: string;
   operationType: OperationType;
   path: string | null;
-  authInfo: {
-    userId?: string;
-    email?: string | null;
-    emailVerified?: boolean;
-    isAnonymous?: boolean;
-    tenantId?: string | null;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
+  userId?: string;
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
-    },
+/**
+ * Logs a structured Firestore error with auth context.
+ * Does not re-throw — callers handle the original error flow.
+ */
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): void {
+  const info: FirestoreErrorInfo = {
+    message: error instanceof Error ? error.message : String(error),
     operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+    path,
+    userId: auth.currentUser?.uid,
+  };
+  console.error("Firestore error:", info);
 }
