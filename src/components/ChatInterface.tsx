@@ -1,12 +1,12 @@
-import { useState, useRef, useEffect, FormEvent } from "react";
-import { Send, Loader2, User, Bot, Layout } from "lucide-react";
+import { useState, useRef, useEffect, FormEvent, ChangeEvent } from "react";
+import { Send, Loader2, User, Bot, Layout, ImagePlus, X } from "lucide-react";
 import { motion } from "motion/react";
 import Markdown from "react-markdown";
 import { cn } from "../lib/utils";
 import { ChatMessage } from "../types";
 
 interface ChatInterfaceProps {
-  onSendMessage: (message: string) => void;
+  onSendMessage: (message: string, imageData?: string, imageMimeType?: string) => void;
   messages: ChatMessage[];
   isLoading: boolean;
   onViewPlan?: () => void;
@@ -30,7 +30,9 @@ const STYLES = [
 
 export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, className, experienceLevel, setExperienceLevel, designStyle, setDesignStyle }: ChatInterfaceProps) {
   const [input, setInput] = useState("");
+  const [pendingImage, setPendingImage] = useState<{ data: string; mimeType: string; preview: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -38,11 +40,33 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
     }
   }, [messages]);
 
+  const handleImageSelect = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+    if (file.size > 5 * 1024 * 1024) return; // 5MB limit
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64 = result.split(",")[1];
+      setPendingImage({
+        data: base64,
+        mimeType: file.type,
+        preview: result,
+      });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (input.trim() && !isLoading) {
-      onSendMessage(input);
+    if ((input.trim() || pendingImage) && !isLoading) {
+      const message = input.trim() || (pendingImage ? "Here's a reference image for the furniture I'd like to build." : "");
+      onSendMessage(message, pendingImage?.data, pendingImage?.mimeType);
       setInput("");
+      setPendingImage(null);
     }
   };
 
@@ -72,8 +96,15 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
               msg.role === "user" ? "bg-orange-100 text-orange-600" : "bg-gray-100 text-gray-600")}>
               {msg.role === "user" ? <User size={16} /> : <Bot size={16} />}
             </div>
-            <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", 
+            <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm",
               msg.role === "user" ? "bg-orange-600 text-white rounded-tr-none" : "bg-gray-100 text-gray-800 rounded-tl-none")}>
+              {msg.imageData && msg.imageMimeType && (
+                <img
+                  src={`data:${msg.imageMimeType};base64,${msg.imageData}`}
+                  alt="Reference"
+                  className="max-w-full max-h-48 rounded-lg mb-2 object-contain"
+                />
+              )}
               <div className="markdown-body prose prose-sm prose-p:leading-relaxed max-w-none">
                 <Markdown>{msg.content}</Markdown>
               </div>
@@ -138,17 +169,44 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
             ))}
           </div>
         </div>
-        <div className="relative">
+        {pendingImage && (
+          <div className="relative inline-block">
+            <img src={pendingImage.preview} alt="Pending upload" className="h-20 rounded-lg border border-gray-200 object-contain" />
+            <button
+              type="button"
+              onClick={() => setPendingImage(null)}
+              className="absolute -top-2 -right-2 w-5 h-5 bg-gray-700 text-white rounded-full flex items-center justify-center hover:bg-gray-900 transition-colors"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+        <div className="relative flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={handleImageSelect}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="p-2.5 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors shrink-0"
+            title="Upload reference image"
+          >
+            <ImagePlus size={18} />
+          </button>
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Describe your project..."
-            className="w-full pl-4 pr-12 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all text-sm"
+            className="flex-1 pl-4 pr-12 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all text-sm"
           />
           <button
             type="submit"
-            disabled={isLoading || !input.trim()}
+            disabled={isLoading || (!input.trim() && !pendingImage)}
             className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-orange-600 hover:bg-orange-50 rounded-lg disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
           >
             <Send size={18} />

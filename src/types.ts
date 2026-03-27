@@ -40,6 +40,9 @@ export interface BuildPlan {
   bom: BOMItem[];
   instructions: string[];
   modelParts?: ModelPart[];
+  changesSummary?: string;
+  warnings?: string[];
+  version?: number;
   createdAt: string;
 }
 
@@ -47,4 +50,6 @@ export interface ChatMessage {
   role: "user" | "model";
   content: string;
   hasPlan?: boolean;
+  imageData?: string; // base64 encoded image
+  imageMimeType?: string; // e.g., "image/jpeg", "image/png"
 }
