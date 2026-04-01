@@ -1,5 +1,5 @@
 import { BuildPlan } from "../types";
-import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2 } from "lucide-react";
+import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2, Image as ImageIcon } from "lucide-react";
 import Markdown from "react-markdown";
 import { motion } from "motion/react";
 import { useState } from "react";
@@ -156,21 +156,56 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
           <Wrench className="text-orange-600" size={20} />
           <h3 className="text-xl font-medium">Assembly Instructions</h3>
         </div>
-        <div className="space-y-4" onMouseLeave={() => onStepHover?.(null)}>
+        <div className="space-y-8" onMouseLeave={() => onStepHover?.(null)}>
           {plan.instructions.map((step, i) => {
             const isString = typeof step === 'string';
             const text = isString ? step : step.text;
             const activeParts = isString ? null : step.activeParts;
+            const imageUrl = isString ? null : step.imageUrl;
+            
             return (
               <div 
                 key={i} 
-                className="flex gap-6 group cursor-default"
+                className="flex flex-col md:flex-row gap-6 group cursor-default"
                 onMouseEnter={() => onStepHover?.(activeParts || null)}
               >
-                <div className="shrink-0 w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-xs font-mono text-gray-400 group-hover:border-orange-500 group-hover:text-orange-600 transition-all">
-                  {String(i + 1).padStart(2, '0')}
+                <div className="flex gap-6 flex-1">
+                  <div className="shrink-0 w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-xs font-mono text-gray-400 group-hover:border-orange-500 group-hover:text-orange-600 transition-all">
+                    {String(i + 1).padStart(2, '0')}
+                  </div>
+                  <div className="space-y-4 flex-1">
+                    <p className="text-gray-700 leading-relaxed pt-1 group-hover:text-gray-900 transition-colors">{text}</p>
+                    {activeParts && activeParts.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {activeParts.map((part, idx) => (
+                          <span key={idx} className="px-2 py-1 bg-orange-50 text-orange-700 text-[10px] uppercase tracking-wider rounded border border-orange-100 font-mono">
+                            {part}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <p className="text-gray-700 leading-relaxed pt-1 group-hover:text-gray-900 transition-colors">{text}</p>
+                {imageUrl && (
+                  <div className="md:w-1/3 shrink-0">
+                    <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 aspect-video relative flex items-center justify-center">
+                      <img 
+                        src={imageUrl} 
+                        alt={`Step ${i + 1} illustration`}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          target.style.display = 'none';
+                          target.parentElement?.classList.add('fallback-icon');
+                        }}
+                      />
+                      <div className="absolute inset-0 items-center justify-center text-gray-300 hidden [.fallback-icon_&]:flex">
+                        <ImageIcon size={32} />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

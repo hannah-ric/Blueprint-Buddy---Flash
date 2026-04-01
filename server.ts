@@ -1,11 +1,17 @@
+import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, Type, Content, ThinkingLevel } from "@google/genai";
 import { MATERIALS, JOINERY } from "./src/constants/reference-data.ts";
+import { validatePlan } from "./src/lib/validate-plan.ts";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
+import cors from "cors";
 
 const __filename = fileURLToPath(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const __dirname = path.dirname(__filename);
 
 // ai instance will be created per request
@@ -58,6 +64,10 @@ const planSchema = {
             type: Type.ARRAY,
             items: { type: Type.STRING },
             description: "An array of exact modelPart names that are being assembled or focused on in this step. Used to highlight parts in the 3D viewer."
+          },
+          imageUrl: {
+            type: Type.STRING,
+            description: "A detailed visual description of this assembly step that can be used to generate an illustration. Describe the parts, how they fit together, tools being used, and the perspective. Be highly descriptive."
           }
         },
         required: ["text"]
@@ -117,7 +127,7 @@ Document this process in the 'designNotes' field in a user-centric, educational,
 If the user asks for modifications (e.g., "make it taller", "change to walnut"), apply them to the previous design context.
 When modifying an existing design, populate the 'changesSummary' field with a bullet-point list of every specific change you made (dimensions changed, parts added/removed, materials swapped, positions adjusted). Be precise with before/after values. For first-time designs, leave changesSummary empty.
 Include a precise cut list, bill of materials (BOM), and step-by-step assembly instructions.
-IMPORTANT: The assembly instructions MUST be an array of objects, where each object has a 'text' field for the instruction step, and an optional 'activeParts' array containing the exact names of the modelParts involved in that step.
+IMPORTANT: The assembly instructions MUST be an array of objects, where each object has a 'text' field for the instruction step, an optional 'activeParts' array containing the exact names of the modelParts involved in that step, and an optional 'imageUrl' field containing a highly descriptive visual prompt for generating an illustration of the step.
 Ensure all dimensions are realistic and joinery is structurally sound.
 If the user provides a reference image, analyze it for style, proportions, materials, and visible joinery, then incorporate those observations into the design. Describe what you see in the image in your designNotes.
 
@@ -192,139 +202,7 @@ For each part, provide its dimensions (width, height, depth) and its center posi
 - Use the same units for 3D coordinates as the rest of the plan.`;
 }
 
-interface ValidationResult {
-  errors: string[];
-  warnings: string[];
-}
 
-function validatePlan(plan: Record<string, unknown>): ValidationResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  const cutList = plan.cutList as Array<{ part: string; quantity: number; thickness: string; width: string; length: string; material: string }> | undefined;
-  const modelParts = plan.modelParts as Array<{ name: string; width: number; height: number; depth: number; x: number; y: number; z: number }> | undefined;
-  const bom = plan.bom as Array<{ item: string; quantity: number; estimatedCost: number }> | undefined;
-  const instructions = plan.instructions as Array<{ text: string; activeParts?: string[] } | string> | undefined;
-
-  if (!cutList?.length) {
-    errors.push("cutList is empty — must contain at least one part.");
-    return { errors, warnings };
-  }
-
-  // 1. Check cutList ↔ modelParts consistency
-  if (modelParts?.length) {
-    // Count expected model parts (accounting for quantity)
-    const expectedPartCount = cutList.reduce((sum, item) => sum + item.quantity, 0);
-    if (modelParts.length !== expectedPartCount) {
-      errors.push(
-        `modelParts count (${modelParts.length}) does not match cutList total quantity (${expectedPartCount}). Each cutList item with quantity N should produce N modelParts with distinct positions.`
-      );
-    }
-
-    // Check that each cutList part name appears in modelParts
-    for (const item of cutList) {
-      const cutNameWords = item.part.toLowerCase().replace(/s$/, '').split(/[\s-]+/).filter(w => w.length > 2);
-      const matchingParts = modelParts.filter(
-        (mp) => {
-          const modelName = mp.name.toLowerCase();
-          if (modelName.includes(item.part.toLowerCase()) || item.part.toLowerCase().includes(modelName)) return true;
-          const modelNameWords = modelName.split(/[\s-]+/).filter(w => w.length > 2);
-          return cutNameWords.some(word => modelNameWords.includes(word));
-        }
-      );
-      if (matchingParts.length === 0) {
-        errors.push(
-          `cutList part "${item.part}" has no matching entry in modelParts. Every cutList part must appear in modelParts.`
-        );
-      }
-    }
-
-    // 2. Check modelPart dimensions roughly match cutList
-    for (const item of cutList) {
-      const cutNameWords = item.part.toLowerCase().replace(/s$/, '').split(/[\s-]+/).filter(w => w.length > 2);
-      const matchingPart = modelParts.find(
-        (mp) => {
-          const modelName = mp.name.toLowerCase();
-          if (modelName.includes(item.part.toLowerCase()) || item.part.toLowerCase().includes(modelName)) return true;
-          const modelNameWords = modelName.split(/[\s-]+/).filter(w => w.length > 2);
-          return cutNameWords.some(word => modelNameWords.includes(word));
-        }
-      );
-      if (matchingPart) {
-        const parseDim = (str: string) => {
-          const s = str.trim();
-          if (s.includes('/')) {
-            const parts = s.split(' ');
-            if (parts.length === 2) {
-              const [num, den] = parts[1].split('/');
-              return parseFloat(parts[0]) + (parseFloat(num) / parseFloat(den));
-            }
-            const [num, den] = s.split('/');
-            return parseFloat(num) / parseFloat(den);
-          }
-          return parseFloat(s);
-        };
-        const cutDims = [parseDim(item.thickness), parseDim(item.width), parseDim(item.length)]
-          .filter((d) => !isNaN(d))
-          .sort((a, b) => a - b);
-        const modelDims = [matchingPart.width, matchingPart.height, matchingPart.depth]
-          .sort((a, b) => a - b);
-        if (cutDims.length === 3) {
-          for (let i = 0; i < 3; i++) {
-            const ratio = modelDims[i] / cutDims[i];
-            if (ratio < 0.5 || ratio > 2.0) {
-              warnings.push(
-                `Dimension mismatch for "${item.part}": cutList [${cutDims.join(",")}] vs modelPart [${modelDims.join(",")}]. These should be closely aligned.`
-              );
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    // 3. Check for overlapping parts (simplified — check if any two parts share the same position)
-    for (let i = 0; i < modelParts.length; i++) {
-      for (let j = i + 1; j < modelParts.length; j++) {
-        const a = modelParts[i];
-        const b = modelParts[j];
-        if (Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01 && Math.abs(a.z - b.z) < 0.01) {
-          warnings.push(
-            `modelParts "${a.name}" and "${b.name}" have identical positions (${a.x}, ${a.y}, ${a.z}). They likely need distinct positions.`
-          );
-        }
-      }
-    }
-  } else {
-    errors.push("modelParts is empty — must contain 3D representations of all cutList parts.");
-  }
-
-  // 4. Check BOM has items
-  if (!bom?.length) {
-    errors.push("BOM is empty — must include wood/materials and hardware.");
-  } else {
-    const hasZeroCost = bom.some((item) => item.estimatedCost <= 0);
-    if (hasZeroCost) {
-      warnings.push("Some BOM items have estimatedCost <= 0. All items should have realistic cost estimates.");
-    }
-  }
-
-  // 5. Check instructions reference cutList part names
-  if (instructions?.length && cutList.length) {
-    const partWords = cutList.flatMap((item) => item.part.toLowerCase().split(/[\s-/]+/).filter(w => w.length > 3));
-    const referencedInInstructions = partWords.some((word) =>
-      instructions.some((step) => {
-        const text = typeof step === 'string' ? step : step.text;
-        return text.toLowerCase().includes(word);
-      })
-    );
-    if (!referencedInInstructions && partWords.length > 0) {
-      warnings.push("Assembly instructions don't seem to reference the cutList parts. Instructions should use specific part names.");
-    }
-  }
-
-  return { errors, warnings };
-}
 
 async function startServer() {
   const app = express();
@@ -332,9 +210,29 @@ async function startServer() {
 
   app.use(express.json({ limit: "10mb" }));
 
+  // Security and utility middleware
+  app.use(cors());
+  if (process.env.NODE_ENV === "production") {
+    app.use(helmet());
+  }
+
+  // Rate limiting for the generate endpoint
+  const generateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 20, // Limit each IP to 20 requests per `window` (here, per 15 minutes)
+    message: { error: "Too many requests from this IP, please try again after 15 minutes" },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   // Health check
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok" });
+    const isDegraded = !process.env.GEMINI_API_KEY && !process.env.API_KEY_DEV;
+    res.json({ 
+      status: isDegraded ? "degraded" : "ok",
+      timestamp: new Date().toISOString(),
+      issues: isDegraded ? ["GEMINI_API_KEY is not configured"] : []
+    });
   });
 
   // Reference data endpoints
@@ -347,7 +245,7 @@ async function startServer() {
   });
 
   // Plan generation endpoint (Gemini API key stays server-side)
-  app.post("/api/generate", async (req, res) => {
+  app.post("/api/generate", generateLimiter, async (req, res, next) => {
     const { messages, userId, experienceLevel, designStyle } = req.body;
 
     if (!messages || !userId || !experienceLevel || !designStyle) {
@@ -381,16 +279,25 @@ async function startServer() {
         return { role: msg.role, parts };
       });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents,
-        config: {
-          systemInstruction: buildSystemPrompt(experienceLevel, designStyle),
-          responseMimeType: "application/json",
-          responseSchema: responseSchema,
-          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
-        },
-      });
+      // AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout
+
+      let response;
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents,
+          config: {
+            systemInstruction: buildSystemPrompt(experienceLevel, designStyle),
+            responseMimeType: "application/json",
+            responseSchema: responseSchema,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+          },
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       const responseData = JSON.parse(response.text);
       
@@ -416,16 +323,24 @@ async function startServer() {
           { role: "user", parts: [{ text: correctionMessage }] },
         ];
 
-        const retryResponse = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
-          contents: retryContents,
-          config: {
-            systemInstruction: systemPrompt,
-            responseMimeType: "application/json",
-            responseSchema: responseSchema,
-            thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
-          },
-        });
+        const retryController = new AbortController();
+        const retryTimeoutId = setTimeout(() => retryController.abort(), 120000);
+
+        let retryResponse;
+        try {
+          retryResponse = await ai.models.generateContent({
+            model: "gemini-3.1-pro-preview",
+            contents: retryContents,
+            config: {
+              systemInstruction: systemPrompt,
+              responseMimeType: "application/json",
+              responseSchema: responseSchema,
+              thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+            },
+          });
+        } finally {
+          clearTimeout(retryTimeoutId);
+        }
 
         const retryData = JSON.parse(retryResponse.text);
         if (retryData.isClarifying) {
@@ -438,6 +353,41 @@ async function startServer() {
 
       // Include any remaining warnings in the response
       const allWarnings = [...validation.errors, ...validation.warnings];
+
+      // Generate images for instructions
+      if (planData.instructions) {
+        try {
+          const imagePromises = planData.instructions.map(async (step: { text: string; activeParts?: string[]; imageUrl?: string }) => {
+            if (step.imageUrl) {
+              try {
+                const imageResponse = await ai.models.generateImages({
+                  model: 'imagen-4.0-generate-001',
+                  prompt: `A clear, professional, minimalist 3D illustration of a woodworking assembly step. ${step.imageUrl}. White background, clean lines, instructional style, isometric view. Show the parts being assembled clearly.`,
+                  config: {
+                    numberOfImages: 1,
+                    outputMimeType: 'image/jpeg',
+                    aspectRatio: '1:1',
+                  },
+                });
+                
+                if (imageResponse.generatedImages && imageResponse.generatedImages.length > 0) {
+                  step.imageUrl = `data:image/jpeg;base64,${imageResponse.generatedImages[0].image.imageBytes}`;
+                } else {
+                  step.imageUrl = undefined;
+                }
+              } catch (imgError) {
+                console.error("Failed to generate image for step:", imgError);
+                step.imageUrl = undefined;
+              }
+            }
+            return step;
+          });
+          
+          planData.instructions = await Promise.all(imagePromises);
+        } catch (error) {
+          console.error("Error generating instruction images:", error);
+        }
+      }
 
       res.json({
         isClarifying: false,
@@ -452,9 +402,21 @@ async function startServer() {
       });
     } catch (error) {
       console.error("Gemini API error:", error);
-      const message = error instanceof Error ? error.message : "Failed to generate build plan";
-      res.status(500).json({ error: message });
+      next(error);
     }
+  });
+
+  // API 404 handler
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: "API route not found" });
+  });
+
+  // Global error middleware
+  app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error("Unhandled error:", err);
+    res.status(500).json({ 
+      error: err instanceof Error && err.message === "AbortError" ? "Request timed out" : "Internal server error" 
+    });
   });
 
   // Vite middleware for development
@@ -472,9 +434,27 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Graceful shutdown
+  const shutdown = () => {
+    console.log("SIGTERM/SIGINT received. Shutting down gracefully...");
+    server.close(() => {
+      console.log("Closed out remaining connections.");
+      process.exit(0);
+    });
+
+    // Force close after 10s
+    setTimeout(() => {
+      console.error("Could not close connections in time, forcefully shutting down");
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 startServer();
