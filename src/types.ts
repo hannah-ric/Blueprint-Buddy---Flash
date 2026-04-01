@@ -24,6 +24,11 @@ export interface ModelPart {
   z: number;
 }
 
+export interface InstructionStep {
+  text: string;
+  activeParts?: string[];
+}
+
 export interface BuildPlan {
   id?: string;
   userId: string;
@@ -38,11 +43,8 @@ export interface BuildPlan {
   designStyle?: string;
   cutList: CutListItem[];
   bom: BOMItem[];
-  instructions: string[];
+  instructions: (InstructionStep | string)[];
   modelParts?: ModelPart[];
-  changesSummary?: string;
-  warnings?: string[];
-  version?: number;
   createdAt: string;
 }
 
@@ -50,6 +52,7 @@ export interface ChatMessage {
   role: "user" | "model";
   content: string;
   hasPlan?: boolean;
-  imageData?: string; // base64 encoded image
-  imageMimeType?: string; // e.g., "image/jpeg", "image/png"
+  planData?: string;
+  imageData?: string;
+  imageMimeType?: string;
 }

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Stage, PerspectiveCamera, Grid, Edges, DragControls, Html } from "@react-three/drei";
+import { OrbitControls, Stage, PerspectiveCamera, Grid, Edges, DragControls } from "@react-three/drei";
 import { Suspense, useState, useRef, useEffect } from "react";
 import { motion } from "motion/react";
 import { ModelPart } from "../types";
@@ -9,9 +9,10 @@ import { cn } from "../lib/utils";
 interface ThreeDViewerProps {
   name?: string;
   parts?: ModelPart[];
+  activeParts?: string[] | null;
 }
 
-function AnimatedPart({ part, isExploded, showDimensions }: { part: ModelPart, isExploded: boolean, showDimensions: boolean }) {
+function AnimatedPart({ part, isExploded, isActive }: { part: ModelPart, isExploded: boolean, isActive: boolean }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [manualPos, setManualPos] = useState<THREE.Vector3 | null>(null);
@@ -33,6 +34,7 @@ function AnimatedPart({ part, isExploded, showDimensions }: { part: ModelPart, i
 
   // Reset manual position when explosion state changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setManualPos(null);
   }, [isExploded]);
 
@@ -56,41 +58,33 @@ function AnimatedPart({ part, isExploded, showDimensions }: { part: ModelPart, i
     >
       <mesh ref={meshRef} position={[px, py, pz]} castShadow receiveShadow>
         <boxGeometry args={[pw, ph, pd]} />
-        <meshStandardMaterial color={isDragging ? "#F4A460" : "#DEB887"} roughness={0.8} />
+        <meshStandardMaterial 
+          color={isDragging ? "#F4A460" : "#DEB887"} 
+          roughness={0.8} 
+          transparent={!isActive}
+          opacity={isActive ? 1 : 0.2}
+        />
         <Edges scale={1} threshold={15} color="#8B4513" />
-        {showDimensions && (
-          <Html
-            position={[0, ph / 2 + 1, 0]}
-            center
-            distanceFactor={80}
-            style={{ pointerEvents: "none" }}
-          >
-            <div className="bg-white/90 backdrop-blur px-2 py-1 rounded shadow-sm border border-gray-200 whitespace-nowrap">
-              <p className="text-[9px] font-mono font-semibold text-gray-800 text-center">{part.name}</p>
-              <p className="text-[8px] font-mono text-gray-500 text-center">{pw} x {ph} x {pd}</p>
-            </div>
-          </Html>
-        )}
       </mesh>
     </DragControls>
   );
 }
 
-function DynamicFurniture({ parts, isExploded, showDimensions }: { parts: ModelPart[], isExploded: boolean, showDimensions: boolean }) {
+function DynamicFurniture({ parts, isExploded, activeParts }: { parts: ModelPart[], isExploded: boolean, activeParts?: string[] | null }) {
   if (!parts || parts.length === 0) return null;
 
   return (
     <group>
-      {parts.map((part, i) => (
-        <AnimatedPart key={i} part={part} isExploded={isExploded} showDimensions={showDimensions} />
-      ))}
+      {parts.map((part, i) => {
+        const isActive = !activeParts || activeParts.length === 0 || activeParts.includes(part.name);
+        return <AnimatedPart key={i} part={part} isExploded={isExploded} isActive={isActive} />;
+      })}
     </group>
   );
 }
 
-export function ThreeDViewer({ name, parts }: ThreeDViewerProps) {
+export function ThreeDViewer({ name, parts, activeParts }: ThreeDViewerProps) {
   const [isExploded, setIsExploded] = useState(false);
-  const [showDimensions, setShowDimensions] = useState(false);
 
   return (
     <motion.div 
@@ -108,7 +102,7 @@ export function ThreeDViewer({ name, parts }: ThreeDViewerProps) {
         <Suspense fallback={null}>
           <Stage environment="city" intensity={0.5}>
             {parts && parts.length > 0 ? (
-              <DynamicFurniture parts={parts} isExploded={isExploded} showDimensions={showDimensions} />
+              <DynamicFurniture parts={parts} isExploded={isExploded} activeParts={activeParts} />
             ) : (
               <mesh>
                 <boxGeometry args={[10, 10, 10]} />
@@ -132,19 +126,13 @@ export function ThreeDViewer({ name, parts }: ThreeDViewerProps) {
       </Canvas>
 
       <div className="absolute bottom-6 right-6 flex gap-2">
-        <button
-          onClick={() => setShowDimensions(!showDimensions)}
-          className={cn("px-3 py-1 bg-white/80 backdrop-blur border border-gray-200 rounded text-[10px] uppercase tracking-wider font-semibold hover:bg-white transition-colors", showDimensions ? "opacity-100 border-orange-300 bg-orange-50/80" : "opacity-50")}
-        >
-          Dimensions
-        </button>
-        <button
+        <button 
           onClick={() => setIsExploded(false)}
           className={cn("px-3 py-1 bg-white/80 backdrop-blur border border-gray-200 rounded text-[10px] uppercase tracking-wider font-semibold hover:bg-white transition-colors", !isExploded ? "opacity-100" : "opacity-50")}
         >
           Assembled
         </button>
-        <button
+        <button 
           onClick={() => setIsExploded(true)}
           className={cn("px-3 py-1 bg-white/80 backdrop-blur border border-gray-200 rounded text-[10px] uppercase tracking-wider font-semibold hover:bg-white transition-colors", isExploded ? "opacity-100" : "opacity-50")}
         >

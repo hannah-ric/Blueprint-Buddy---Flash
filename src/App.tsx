@@ -1,14 +1,13 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "./lib/firebase";
 import { ChatInterface } from "./components/ChatInterface";
+import { ThreeDViewer } from "./components/ThreeDViewer";
 import { PlanDetails } from "./components/PlanDetails";
 import { Auth } from "./components/Auth";
 import { ProjectHistory } from "./components/ProjectHistory";
 import { EmptyState } from "./components/EmptyState";
-
-const ThreeDViewer = lazy(() => import("./components/ThreeDViewer").then(m => ({ default: m.ThreeDViewer })));
 import { BuildPlan, ChatMessage } from "./types";
 import { generateBuildPlan } from "./services/gemini";
 import { Hammer, Layout, Boxes, History, ChevronLeft } from "lucide-react";
@@ -21,11 +20,11 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentPlan, setCurrentPlan] = useState<BuildPlan | null>(null);
-  const [planVersions, setPlanVersions] = useState<BuildPlan[]>([]);
   const [history, setHistory] = useState<BuildPlan[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"design" | "history">("design");
   const [mobileView, setMobileView] = useState<"chat" | "plan">("chat");
+  const [activeStepParts, setActiveStepParts] = useState<string[] | null>(null);
   const [experienceLevel, setExperienceLevel] = useState<string>("Intermediate");
   const [designStyle, setDesignStyle] = useState<string>("Mid-Century Modern");
 
@@ -72,59 +71,40 @@ export default function App() {
 
   const handleSendMessage = async (content: string, imageData?: string, imageMimeType?: string) => {
     if (!user) {
-      setMessages(prev => [...prev,
+      setMessages(prev => [...prev, 
         { role: "user", content },
         { role: "model", content: "Please sign in to generate build plans." }
       ]);
       return;
     }
 
-    const userMessage: ChatMessage = { role: "user", content, imageData, imageMimeType };
-    const newMessages: ChatMessage[] = [...messages, userMessage];
+    const newMessages: ChatMessage[] = [...messages, { role: "user", content, imageData, imageMimeType }];
     setMessages(newMessages);
     setIsLoading(true);
 
     try {
-      const plan = await generateBuildPlan(newMessages, user.uid, experienceLevel, designStyle);
-      await addDoc(collection(db, "plans"), {
-        ...plan,
-        createdAt: serverTimestamp(),
-      }).catch((dbError) => {
-        handleFirestoreError(dbError, OperationType.CREATE, "plans");
-      });
-      const versionNumber = planVersions.length + 1;
-      const versionedPlan = { ...plan, version: versionNumber };
-      setPlanVersions(prev => [...prev, versionedPlan]);
-      setCurrentPlan(versionedPlan);
-
-      let chatContent = `I've generated a build plan for your ${plan.name}. You can see the details and 3D preview now.`;
-      if (plan.changesSummary) {
-        chatContent += `\n\n**Changes made:**\n${plan.changesSummary}`;
+      const response = await generateBuildPlan(newMessages, user.uid, experienceLevel, designStyle);
+      
+      if (response.isClarifying) {
+        setMessages(prev => [...prev, { role: "model", content: response.message }]);
+      } else {
+        const plan = response.plan;
+        try {
+          await addDoc(collection(db, "plans"), {
+            ...plan,
+            createdAt: serverTimestamp()
+          });
+        } catch (dbError) {
+          handleFirestoreError(dbError, OperationType.CREATE, "plans");
+        }
+        setCurrentPlan(plan);
+        setMessages(prev => [...prev, { role: "model", content: `I've generated a build plan for your ${plan.name}. You can see the details and 3D preview now.`, hasPlan: true, planData: JSON.stringify(plan) }]);
       }
-      if (plan.warnings && plan.warnings.length > 0) {
-        chatContent += `\n\n_Note: ${plan.warnings.length} warning(s) found — see plan details._`;
-      }
-      setMessages(prev => [...prev, { role: "model", content: chatContent, hasPlan: true }]);
     } catch (error) {
       console.error(error);
       setMessages(prev => [...prev, { role: "model", content: "Sorry, I encountered an error generating your plan. Please try again." }]);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleSelectVersion = (version: number) => {
-    const selected = planVersions.find(v => v.version === version);
-    if (selected) setCurrentPlan(selected);
-  };
-
-  const handleRevertToVersion = (version: number) => {
-    const selected = planVersions.find(v => v.version === version);
-    if (selected) {
-      const revertedPlan = { ...selected, version: planVersions.length + 1 };
-      setPlanVersions(prev => [...prev, revertedPlan]);
-      setCurrentPlan(revertedPlan);
-      setMessages(prev => [...prev, { role: "model", content: `Reverted to version ${version} of the plan.`, hasPlan: true }]);
     }
   };
 
@@ -197,15 +177,13 @@ export default function App() {
                   {currentPlan ? (
                     <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                       <div className="w-full md:w-1/2 h-1/2 md:h-full border-r border-gray-200">
-                        <Suspense fallback={<div className="w-full h-full bg-[#E4E3E0] flex items-center justify-center text-gray-400 text-sm">Loading 3D viewer...</div>}>
-                          <ThreeDViewer name={currentPlan.name} parts={currentPlan.modelParts} />
-                        </Suspense>
+                        <ThreeDViewer name={currentPlan.name} parts={currentPlan.modelParts} activeParts={activeStepParts} />
                       </div>
-                      <PlanDetails
-                        plan={currentPlan}
-                        planVersions={planVersions}
-                        onSelectVersion={handleSelectVersion}
-                        onRevertToVersion={handleRevertToVersion}
+                      <PlanDetails 
+                        plan={currentPlan} 
+                        onSendMessage={handleSendMessage}
+                        isLoading={isLoading}
+                        onStepHover={setActiveStepParts}
                       />
                     </div>
                   ) : (
@@ -232,9 +210,8 @@ export default function App() {
                 history={history} 
                 isLoading={isHistoryLoading}
                 onSelectPlan={(plan) => {
-                  const loadedPlan = { ...plan, version: 1 };
-                  setCurrentPlan(loadedPlan);
-                  setPlanVersions([loadedPlan]);
+                  setCurrentPlan(plan);
+                  setMessages([{ role: "model", content: `I've loaded the build plan for your ${plan.name}. You can see the details and 3D preview now.`, hasPlan: true, planData: JSON.stringify(plan) }]);
                   setActiveTab("design");
                   setMobileView("plan");
                 }} 

@@ -2,20 +2,20 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import { GoogleGenAI, Type, Content } from "@google/genai";
+import { GoogleGenAI, Type, Content, ThinkingLevel } from "@google/genai";
 import { MATERIALS, JOINERY } from "./src/constants/reference-data.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+// ai instance will be created per request
 
 const planSchema = {
   type: Type.OBJECT,
   properties: {
     name: { type: Type.STRING, description: "Name of the furniture piece" },
     description: { type: Type.STRING, description: "Brief description of the design" },
-    designNotes: { type: Type.STRING, description: "Detailed reasoning, structural analysis, and self-correction notes for the design choices" },
+    designNotes: { type: Type.STRING, description: "Educational, user-centric explanation of the design choices, structural reasoning, and any modifications made. Keep it simple, encouraging, and easy to understand." },
     dimensions: { type: Type.STRING, description: "Overall dimensions (e.g., 48x18x30 in)" },
     material: { type: Type.STRING, description: "Primary material (e.g., Walnut, Oak)" },
     joinery: { type: Type.STRING, description: "Primary joinery method" },
@@ -50,7 +50,18 @@ const planSchema = {
     },
     instructions: {
       type: Type.ARRAY,
-      items: { type: Type.STRING },
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          text: { type: Type.STRING, description: "The instruction step text." },
+          activeParts: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "An array of exact modelPart names that are being assembled or focused on in this step. Used to highlight parts in the 3D viewer."
+          }
+        },
+        required: ["text"]
+      },
     },
     modelParts: {
       type: Type.ARRAY,
@@ -73,6 +84,16 @@ const planSchema = {
   required: ["name", "description", "designNotes", "dimensions", "material", "joinery", "units", "cutList", "bom", "instructions", "modelParts"],
 };
 
+const responseSchema = {
+  type: Type.OBJECT,
+  properties: {
+    isClarifying: { type: Type.BOOLEAN, description: "Set to true if the user's request is too vague and you need to ask clarifying questions before generating a plan." },
+    message: { type: Type.STRING, description: "The clarifying question or conversational response to the user. Required if isClarifying is true." },
+    plan: planSchema
+  },
+  required: ["isClarifying"]
+};
+
 const materialsContext = `\nAVAILABLE MATERIALS:\n${JSON.stringify(MATERIALS, null, 2)}`;
 const joineryContext = `\nAVAILABLE JOINERY:\n${JSON.stringify(JOINERY, null, 2)}`;
 
@@ -80,16 +101,23 @@ function buildSystemPrompt(experienceLevel: string, designStyle: string): string
   return `You are Blueprint Buddy, an expert furniture designer and master woodworker.
 Generate a detailed, professional-grade build plan based on the user's request AND the provided conversation history.
 
-*** ADVANCED REASONING & SELF-CORRECTION PHASE ***
-Before finalizing the plan, you MUST perform a structural and practical analysis of your initial design concept.
-Document this process in the 'designNotes' field:
-1. Analyze the load-bearing requirements and structural integrity (e.g., "A 60-inch span will sag without an apron").
-2. Evaluate material efficiency and joinery appropriateness for the user's experience level.
-3. Explicitly state any self-corrections made during your thought process (e.g., "Initially considered pocket holes, but changed to dowels for better shear strength on the legs").
+*** CLARIFYING QUESTIONS PHASE ***
+If the user's request is too vague, unclear, or lacks necessary details to generate a good plan (e.g., "build a table" with no dimensions, style, or purpose), you MUST set 'isClarifying' to true.
+When 'isClarifying' is true, provide a conversational response in the 'message' field asking 1-2 specific questions to fine-tune the approach (e.g., "What kind of table are you looking for? A dining table, coffee table, or desk? Do you have any specific dimensions in mind?").
+Do NOT generate the 'plan' object if you are asking clarifying questions.
+Only set 'isClarifying' to false and generate the full 'plan' when you have enough information to proceed.
+
+*** DESIGN REASONING & EDUCATIONAL EXPLANATION ***
+Before finalizing the plan, you MUST perform a structural and practical analysis of your design concept.
+Document this process in the 'designNotes' field in a user-centric, educational, and simple way:
+1. Explain the structural choices simply (e.g., "I added an apron under the table top to prevent it from sagging over time").
+2. Explain why the chosen materials and joinery are appropriate for the user's experience level.
+3. If you made any self-corrections or modifications from the user's request, explain why in a helpful, educational tone (e.g., "You asked for 1/2 inch plywood for the legs, but I upgraded it to 3/4 inch to ensure the table is sturdy enough to hold weight").
 
 If the user asks for modifications (e.g., "make it taller", "change to walnut"), apply them to the previous design context.
 When modifying an existing design, populate the 'changesSummary' field with a bullet-point list of every specific change you made (dimensions changed, parts added/removed, materials swapped, positions adjusted). Be precise with before/after values. For first-time designs, leave changesSummary empty.
 Include a precise cut list, bill of materials (BOM), and step-by-step assembly instructions.
+IMPORTANT: The assembly instructions MUST be an array of objects, where each object has a 'text' field for the instruction step, and an optional 'activeParts' array containing the exact names of the modelParts involved in that step.
 Ensure all dimensions are realistic and joinery is structurally sound.
 If the user provides a reference image, analyze it for style, proportions, materials, and visible joinery, then incorporate those observations into the design. Describe what you see in the image in your designNotes.
 
@@ -176,7 +204,7 @@ function validatePlan(plan: Record<string, unknown>): ValidationResult {
   const cutList = plan.cutList as Array<{ part: string; quantity: number; thickness: string; width: string; length: string; material: string }> | undefined;
   const modelParts = plan.modelParts as Array<{ name: string; width: number; height: number; depth: number; x: number; y: number; z: number }> | undefined;
   const bom = plan.bom as Array<{ item: string; quantity: number; estimatedCost: number }> | undefined;
-  const instructions = plan.instructions as string[] | undefined;
+  const instructions = plan.instructions as Array<{ text: string; activeParts?: string[] } | string> | undefined;
 
   if (!cutList?.length) {
     errors.push("cutList is empty — must contain at least one part.");
@@ -195,8 +223,14 @@ function validatePlan(plan: Record<string, unknown>): ValidationResult {
 
     // Check that each cutList part name appears in modelParts
     for (const item of cutList) {
+      const cutNameWords = item.part.toLowerCase().replace(/s$/, '').split(/[\s-]+/).filter(w => w.length > 2);
       const matchingParts = modelParts.filter(
-        (mp) => mp.name.toLowerCase().includes(item.part.toLowerCase()) || item.part.toLowerCase().includes(mp.name.toLowerCase())
+        (mp) => {
+          const modelName = mp.name.toLowerCase();
+          if (modelName.includes(item.part.toLowerCase()) || item.part.toLowerCase().includes(modelName)) return true;
+          const modelNameWords = modelName.split(/[\s-]+/).filter(w => w.length > 2);
+          return cutNameWords.some(word => modelNameWords.includes(word));
+        }
       );
       if (matchingParts.length === 0) {
         errors.push(
@@ -207,11 +241,30 @@ function validatePlan(plan: Record<string, unknown>): ValidationResult {
 
     // 2. Check modelPart dimensions roughly match cutList
     for (const item of cutList) {
+      const cutNameWords = item.part.toLowerCase().replace(/s$/, '').split(/[\s-]+/).filter(w => w.length > 2);
       const matchingPart = modelParts.find(
-        (mp) => mp.name.toLowerCase().includes(item.part.toLowerCase()) || item.part.toLowerCase().includes(mp.name.toLowerCase())
+        (mp) => {
+          const modelName = mp.name.toLowerCase();
+          if (modelName.includes(item.part.toLowerCase()) || item.part.toLowerCase().includes(modelName)) return true;
+          const modelNameWords = modelName.split(/[\s-]+/).filter(w => w.length > 2);
+          return cutNameWords.some(word => modelNameWords.includes(word));
+        }
       );
       if (matchingPart) {
-        const cutDims = [parseFloat(item.thickness), parseFloat(item.width), parseFloat(item.length)]
+        const parseDim = (str: string) => {
+          const s = str.trim();
+          if (s.includes('/')) {
+            const parts = s.split(' ');
+            if (parts.length === 2) {
+              const [num, den] = parts[1].split('/');
+              return parseFloat(parts[0]) + (parseFloat(num) / parseFloat(den));
+            }
+            const [num, den] = s.split('/');
+            return parseFloat(num) / parseFloat(den);
+          }
+          return parseFloat(s);
+        };
+        const cutDims = [parseDim(item.thickness), parseDim(item.width), parseDim(item.length)]
           .filter((d) => !isNaN(d))
           .sort((a, b) => a - b);
         const modelDims = [matchingPart.width, matchingPart.height, matchingPart.depth]
@@ -258,12 +311,15 @@ function validatePlan(plan: Record<string, unknown>): ValidationResult {
 
   // 5. Check instructions reference cutList part names
   if (instructions?.length && cutList.length) {
-    const partNames = cutList.map((item) => item.part.toLowerCase());
-    const referencedInInstructions = partNames.some((name) =>
-      instructions.some((step) => step.toLowerCase().includes(name))
+    const partWords = cutList.flatMap((item) => item.part.toLowerCase().split(/[\s-/]+/).filter(w => w.length > 3));
+    const referencedInInstructions = partWords.some((word) =>
+      instructions.some((step) => {
+        const text = typeof step === 'string' ? step : step.text;
+        return text.toLowerCase().includes(word);
+      })
     );
-    if (!referencedInInstructions) {
-      warnings.push("Assembly instructions don't reference any cutList part names. Instructions should use specific part names.");
+    if (!referencedInInstructions && partWords.length > 0) {
+      warnings.push("Assembly instructions don't seem to reference the cutList parts. Instructions should use specific part names.");
     }
   }
 
@@ -299,14 +355,21 @@ async function startServer() {
       return;
     }
 
-    if (!process.env.GEMINI_API_KEY) {
-      res.status(500).json({ error: "GEMINI_API_KEY is not configured" });
+    const apiKey = process.env.API_KEY_DEV || process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      res.status(500).json({ error: "API Key is not configured" });
       return;
     }
 
+    const ai = new GoogleGenAI({ apiKey });
+
     try {
-      const contents: Content[] = messages.map((msg: { role: string; content: string; imageData?: string; imageMimeType?: string }) => {
+      const contents: Content[] = messages.map((msg: { role: string; content: string; imageData?: string; imageMimeType?: string; planData?: string }) => {
         const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: msg.content }];
+        if (msg.planData) {
+          parts.push({ text: `\n\n[SYSTEM: The current plan JSON is provided below for context. If the user requests a change, modify this plan.]\n${msg.planData}` });
+        }
         if (msg.imageData && msg.imageMimeType) {
           parts.push({
             inlineData: {
@@ -324,11 +387,19 @@ async function startServer() {
         config: {
           systemInstruction: buildSystemPrompt(experienceLevel, designStyle),
           responseMimeType: "application/json",
-          responseSchema: planSchema,
+          responseSchema: responseSchema,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
         },
       });
 
-      let planData = JSON.parse(response.text);
+      const responseData = JSON.parse(response.text);
+      
+      if (responseData.isClarifying) {
+        res.json(responseData);
+        return;
+      }
+
+      let planData = responseData.plan;
       const systemPrompt = buildSystemPrompt(experienceLevel, designStyle);
 
       // Validate the plan
@@ -351,11 +422,17 @@ async function startServer() {
           config: {
             systemInstruction: systemPrompt,
             responseMimeType: "application/json",
-            responseSchema: planSchema,
+            responseSchema: responseSchema,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
           },
         });
 
-        planData = JSON.parse(retryResponse.text);
+        const retryData = JSON.parse(retryResponse.text);
+        if (retryData.isClarifying) {
+          res.json(retryData);
+          return;
+        }
+        planData = retryData.plan;
         validation = validatePlan(planData);
       }
 
@@ -363,12 +440,15 @@ async function startServer() {
       const allWarnings = [...validation.errors, ...validation.warnings];
 
       res.json({
-        ...planData,
-        userId,
-        experienceLevel,
-        designStyle,
-        warnings: allWarnings.length > 0 ? allWarnings : undefined,
-        createdAt: new Date().toISOString(),
+        isClarifying: false,
+        plan: {
+          ...planData,
+          userId,
+          experienceLevel,
+          designStyle,
+          warnings: allWarnings.length > 0 ? allWarnings : undefined,
+          createdAt: new Date().toISOString(),
+        }
       });
     } catch (error) {
       console.error("Gemini API error:", error);

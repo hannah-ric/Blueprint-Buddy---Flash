@@ -1,20 +1,22 @@
-import { BuildPlan, ChatMessage } from "../types";
+import { ChatMessage } from "../types";
 
-export async function generateBuildPlan(
-  messages: ChatMessage[],
-  userId: string,
-  experienceLevel: string,
-  designStyle: string
-): Promise<BuildPlan> {
+export async function generateBuildPlan(messages: ChatMessage[], userId: string, experienceLevel: string, designStyle: string) {
   const response = await fetch("/api/generate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, userId, experienceLevel, designStyle }),
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      messages,
+      userId,
+      experienceLevel,
+      designStyle
+    })
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: "Unknown error" }));
-    throw new Error(error.error || `Server error: ${response.status}`);
+    const error = await response.json();
+    throw new Error(error.error || "Failed to generate plan");
   }
 
   return response.json();

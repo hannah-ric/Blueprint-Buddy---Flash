@@ -1,29 +1,38 @@
 import { BuildPlan } from "../types";
-import { Download, FileText, Package, Wrench, Lightbulb, AlertTriangle, GitCompare, ChevronDown, RotateCcw } from "lucide-react";
+import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2 } from "lucide-react";
 import Markdown from "react-markdown";
 import { motion } from "motion/react";
+import { useState } from "react";
 
 interface PlanDetailsProps {
   plan: BuildPlan;
-  planVersions?: BuildPlan[];
-  onSelectVersion?: (version: number) => void;
-  onRevertToVersion?: (version: number) => void;
+  onSendMessage: (message: string) => void;
+  isLoading: boolean;
+  onStepHover?: (parts: string[] | null) => void;
 }
 
-export function PlanDetails({ plan, planVersions, onSelectVersion, onRevertToVersion }: PlanDetailsProps) {
+export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: PlanDetailsProps) {
+  const [input, setInput] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (input.trim() && !isLoading) {
+      onSendMessage(input.trim());
+      setInput("");
+    }
+  };
+
   const downloadCSV = (type: 'cutlist' | 'bom') => {
-    let content = "";
-    let filename = "";
+    let content: string;
+    let filename: string;
     
     if (type === 'cutlist') {
       content = `Part,Quantity,Thickness (${plan.units}),Width (${plan.units}),Length (${plan.units}),Material\n` + 
         plan.cutList.map(item => `${item.part},${item.quantity},${item.thickness},${item.width},${item.length},${item.material}`).join("\n");
       filename = `${plan.name.replace(/\s+/g, '_')}_cutlist.csv`;
     } else {
-      const totalCost = plan.bom.reduce((sum, item) => sum + item.estimatedCost * item.quantity, 0);
-      content = "Item,Quantity,Unit,Estimated Cost\n" +
-        plan.bom.map(item => `${item.item},${item.quantity},${item.unit},${item.estimatedCost}`).join("\n") +
-        `\nTotal,,,${totalCost.toFixed(2)}`;
+      content = "Item,Quantity,Unit,Estimated Cost\n" + 
+        plan.bom.map(item => `${item.item},${item.quantity},${item.unit},${item.estimatedCost}`).join("\n");
       filename = `${plan.name.replace(/\s+/g, '_')}_bom.csv`;
     }
 
@@ -33,77 +42,16 @@ export function PlanDetails({ plan, planVersions, onSelectVersion, onRevertToVer
     a.href = url;
     a.download = filename;
     a.click();
-    window.URL.revokeObjectURL(url);
   };
 
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="flex-1 overflow-y-auto bg-white p-8 space-y-12"
+      className="flex-1 flex flex-col bg-white"
     >
-      {/* Version Selector */}
-      {planVersions && planVersions.length > 1 && (
-        <div className="flex items-center justify-between bg-gray-50 p-3 rounded-xl border border-gray-200">
-          <div className="flex items-center gap-2">
-            <GitCompare size={16} className="text-gray-400" />
-            <span className="text-xs font-mono uppercase tracking-wider text-gray-500">Version</span>
-            <div className="relative">
-              <select
-                value={plan.version ?? planVersions.length}
-                onChange={(e) => onSelectVersion?.(parseInt(e.target.value))}
-                className="text-xs px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-orange-500 pr-6 appearance-none"
-              >
-                {planVersions.map((v, i) => (
-                  <option key={i} value={v.version ?? i + 1}>
-                    v{v.version ?? i + 1}{i === planVersions.length - 1 ? " (latest)" : ""}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={12} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-            </div>
-          </div>
-          {plan.version !== undefined && plan.version < (planVersions.length) && onRevertToVersion && (
-            <button
-              onClick={() => onRevertToVersion(plan.version!)}
-              className="flex items-center gap-1.5 text-xs text-orange-600 hover:text-orange-700 font-medium transition-colors"
-            >
-              <RotateCcw size={12} />
-              Revert to this version
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Warnings */}
-      {plan.warnings && plan.warnings.length > 0 && (
-        <section className="bg-amber-50/50 p-4 rounded-xl border border-amber-200">
-          <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle size={16} className="text-amber-600" />
-            <span className="text-sm font-medium text-amber-800">Plan Warnings</span>
-          </div>
-          <ul className="text-xs text-amber-700 space-y-1">
-            {plan.warnings.map((w, i) => (
-              <li key={i} className="flex gap-2"><span className="shrink-0">-</span>{w}</li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* Change Summary */}
-      {plan.changesSummary && (
-        <section className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
-          <div className="flex items-center gap-2 mb-2">
-            <GitCompare size={16} className="text-blue-600" />
-            <span className="text-sm font-medium text-blue-800">Changes from Previous Version</span>
-          </div>
-          <div className="text-sm text-blue-700 leading-relaxed whitespace-pre-wrap">
-            <Markdown>{plan.changesSummary}</Markdown>
-          </div>
-        </section>
-      )}
-
-      <section className="space-y-4">
+      <div className="flex-1 overflow-y-auto p-8 space-y-12">
+        <section className="space-y-4">
         <div className="flex items-center justify-between border-b border-gray-200 pb-4">
           <h2 className="text-3xl font-light serif italic">Specifications</h2>
           <div className="flex gap-4">
@@ -144,7 +92,7 @@ export function PlanDetails({ plan, planVersions, onSelectVersion, onRevertToVer
         <section className="space-y-4 bg-orange-50/50 p-6 rounded-2xl border border-orange-100">
           <div className="flex items-center gap-3">
             <Lightbulb className="text-orange-600" size={20} />
-            <h3 className="text-xl font-medium text-orange-900">Design Reasoning & Self-Correction</h3>
+            <h3 className="text-xl font-medium text-orange-900">Why This Design Works</h3>
           </div>
           <div className="text-sm text-orange-800 leading-relaxed whitespace-pre-wrap markdown-body prose prose-sm prose-orange max-w-none">
             <Markdown>{plan.designNotes}</Markdown>
@@ -201,12 +149,6 @@ export function PlanDetails({ plan, planVersions, onSelectVersion, onRevertToVer
             </div>
           ))}
         </div>
-        <div className="flex items-center justify-between p-4 bg-orange-50 rounded-xl border border-orange-200">
-          <p className="font-medium text-orange-900">Estimated Total</p>
-          <p className="font-mono text-lg font-semibold text-orange-700">
-            ${plan.bom.reduce((sum, item) => sum + item.estimatedCost * item.quantity, 0).toFixed(2)}
-          </p>
-        </div>
       </section>
 
       <section className="space-y-6">
@@ -214,17 +156,46 @@ export function PlanDetails({ plan, planVersions, onSelectVersion, onRevertToVer
           <Wrench className="text-orange-600" size={20} />
           <h3 className="text-xl font-medium">Assembly Instructions</h3>
         </div>
-        <div className="space-y-4">
-          {plan.instructions.map((step, i) => (
-            <div key={i} className="flex gap-6 group">
-              <div className="shrink-0 w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-xs font-mono text-gray-400 group-hover:border-orange-500 group-hover:text-orange-600 transition-all">
-                {String(i + 1).padStart(2, '0')}
+        <div className="space-y-4" onMouseLeave={() => onStepHover?.(null)}>
+          {plan.instructions.map((step, i) => {
+            const isString = typeof step === 'string';
+            const text = isString ? step : step.text;
+            const activeParts = isString ? null : step.activeParts;
+            return (
+              <div 
+                key={i} 
+                className="flex gap-6 group cursor-default"
+                onMouseEnter={() => onStepHover?.(activeParts || null)}
+              >
+                <div className="shrink-0 w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-xs font-mono text-gray-400 group-hover:border-orange-500 group-hover:text-orange-600 transition-all">
+                  {String(i + 1).padStart(2, '0')}
+                </div>
+                <p className="text-gray-700 leading-relaxed pt-1 group-hover:text-gray-900 transition-colors">{text}</p>
               </div>
-              <p className="text-gray-700 leading-relaxed pt-1">{step}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
+      </div>
+      <div className="p-4 border-t border-gray-200 bg-gray-50 shrink-0">
+        <form onSubmit={handleSubmit} className="relative">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Request changes to this design..."
+            className="w-full pl-4 pr-12 py-3 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all text-sm"
+            disabled={isLoading}
+          />
+          <button
+            type="submit"
+            disabled={!input.trim() || isLoading}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:hover:bg-orange-600 transition-colors"
+          >
+            {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+          </button>
+        </form>
+      </div>
     </motion.div>
   );
 }
