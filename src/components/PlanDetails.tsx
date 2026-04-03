@@ -3,6 +3,7 @@ import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2, Image as
 import Markdown from "react-markdown";
 import { motion } from "motion/react";
 import { useState, useEffect } from "react";
+import { auth } from "../lib/firebase";
 
 function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -18,9 +19,13 @@ function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number })
     setIsLoading(true);
     setError(false);
     try {
+      const token = await auth.currentUser?.getIdToken();
       const res = await fetch('/api/generate-image', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ prompt })
       });
       if (!res.ok) throw new Error('Failed to generate');

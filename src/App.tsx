@@ -81,6 +81,7 @@ export default function App() {
   }, [user]);
 
   const handleSendMessage = async (content: string, imageData?: string, imageMimeType?: string) => {
+    if (isLoading) return;
     setMobileView("chat");
     if (!user) {
       setMessages(prev => [...prev, 
@@ -101,20 +102,36 @@ export default function App() {
         setMessages(prev => [...prev, { role: "model", content: response.message }]);
       } else {
         const plan = response.plan;
+        let saveWarning = "";
         try {
           await addDoc(collection(db, "plans"), {
             ...plan,
             createdAt: serverTimestamp()
           });
         } catch (dbError) {
-          handleFirestoreError(dbError, OperationType.CREATE, "plans");
+          console.error("Failed to save plan to database:", dbError);
+          saveWarning = "\n\n⚠️ Note: The plan was generated but could not be saved to your history. You may want to try again later.";
         }
         setCurrentPlan(plan);
-        setMessages(prev => [...prev, { role: "model", content: `I've generated a build plan for your ${plan.name}. You can see the details and 3D preview now.`, hasPlan: true, planData: JSON.stringify(plan) }]);
+        setMessages(prev => [...prev, { role: "model", content: `I've generated a build plan for your ${plan.name}. You can see the details and 3D preview now.${saveWarning}`, hasPlan: true, planData: JSON.stringify(plan) }]);
       }
     } catch (error) {
       console.error(error);
-      setMessages(prev => [...prev, { role: "model", content: "Sorry, I encountered an error generating your plan. Please try again." }]);
+      let errorMsg = "Sorry, something went wrong generating your plan. Please try again.";
+      if (error instanceof Error) {
+        if (error.message.includes("timed out") || error.name === "AbortError") {
+          errorMsg = "The request timed out — the design is taking longer than expected. Please try a simpler description or try again.";
+        } else if (error.message.includes("Too many requests") || (error as Error & { statusCode?: number }).statusCode === 429) {
+          errorMsg = "You've made too many requests. Please wait a few minutes and try again.";
+        } else if (error.message.includes("Not authenticated")) {
+          errorMsg = "You need to sign in before generating plans. Please sign in and try again.";
+        } else if (error.message.includes("Failed to generate") || error.message.includes("Internal server error")) {
+          errorMsg = "The AI service encountered an issue. Please try again in a moment.";
+        } else if (!navigator.onLine) {
+          errorMsg = "You appear to be offline. Please check your internet connection and try again.";
+        }
+      }
+      setMessages(prev => [...prev, { role: "model", content: errorMsg }]);
     } finally {
       setIsLoading(false);
     }
