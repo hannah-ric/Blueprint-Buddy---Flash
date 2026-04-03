@@ -7,10 +7,11 @@ import { ThreeDViewer } from "./components/ThreeDViewer";
 import { PlanDetails } from "./components/PlanDetails";
 import { Auth } from "./components/Auth";
 import { ProjectHistory } from "./components/ProjectHistory";
+import { Marketplace } from "./components/Marketplace";
 import { EmptyState } from "./components/EmptyState";
 import { BuildPlan, ChatMessage } from "./types";
 import { generateBuildPlan } from "./services/gemini";
-import { Hammer, Layout, Boxes, History, ChevronLeft } from "lucide-react";
+import { Hammer, Layout, History, Store, ChevronLeft } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "./lib/utils";
 import { handleFirestoreError, OperationType } from "./lib/firestore-errors";
@@ -22,7 +23,7 @@ export default function App() {
   const [currentPlan, setCurrentPlan] = useState<BuildPlan | null>(null);
   const [history, setHistory] = useState<BuildPlan[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"design" | "history">("design");
+  const [activeTab, setActiveTab] = useState<"design" | "history" | "marketplace">("design");
   const [mobileView, setMobileView] = useState<"chat" | "plan">("chat");
   const [activeStepParts, setActiveStepParts] = useState<string[] | null>(null);
   const [experienceLevel, setExperienceLevel] = useState<string>("Intermediate");
@@ -135,16 +136,22 @@ export default function App() {
           >
             <Layout size={20} />
           </button>
-          <button 
+          <button
             onClick={() => setActiveTab("history")}
             className={cn("p-3 rounded-xl transition-all", activeTab === "history" ? "bg-white/10 text-white" : "text-gray-500 hover:text-gray-300")}
           >
             <History size={20} />
           </button>
+          <button
+            onClick={() => setActiveTab("marketplace")}
+            className={cn("p-3 rounded-xl transition-all", activeTab === "marketplace" ? "bg-white/10 text-white" : "text-gray-500 hover:text-gray-300")}
+          >
+            <Store size={20} />
+          </button>
         </nav>
 
         <div className="mt-auto">
-          <Boxes className="text-gray-700" size={20} />
+          <Store className="text-gray-700" size={16} />
         </div>
       </aside>
 
@@ -204,8 +211,8 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
-          ) : (
-            <motion.div 
+          ) : activeTab === "history" ? (
+            <motion.div
               key="history"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -216,18 +223,33 @@ export default function App() {
                 <h1 className="text-sm font-mono uppercase tracking-[0.2em] text-gray-400">Project History</h1>
                 <Auth user={user} />
               </header>
-              
-              <ProjectHistory 
-                user={user} 
-                history={history} 
+
+              <ProjectHistory
+                user={user}
+                history={history}
                 isLoading={isHistoryLoading}
                 onSelectPlan={(plan) => {
                   setCurrentPlan(plan);
                   setMessages([{ role: "model", content: `I've loaded the build plan for your ${plan.name}. You can see the details and 3D preview now.`, hasPlan: true, planData: JSON.stringify(plan) }]);
                   setActiveTab("design");
                   setMobileView("plan");
-                }} 
+                }}
               />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="marketplace"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="flex-1 flex flex-col overflow-hidden"
+            >
+              <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-8 shrink-0">
+                <h1 className="text-sm font-mono uppercase tracking-[0.2em] text-gray-400">Skills Marketplace</h1>
+                <Auth user={user} />
+              </header>
+
+              <Marketplace user={user} />
             </motion.div>
           )}
         </AnimatePresence>

@@ -58,3 +58,46 @@ export interface ChatMessage {
   imageData?: string;
   imageMimeType?: string;
 }
+
+// Marketplace & Skills types
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  category: "design" | "materials" | "joinery" | "finishing" | "business" | "general";
+  icon: string;
+  promptInjection?: string;
+  referenceData?: Record<string, unknown>;
+  author: string;
+}
+
+export interface SkillBundle {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  author: string;
+  version: string;
+  icon: string;
+  category: "engineering" | "marketing" | "leadership" | "design" | "general";
+  skills: Skill[];
+  installCount: number;
+  rating: number;
+  tags: string[];
+}
+
+export interface MarketplaceSource {
+  id: string;
+  name: string;
+  owner: string;
+  url: string;
+  addedAt: string;
+}
+
+export interface InstalledBundle {
+  bundleId: string;
+  installedAt: string;
+  version: string;
+  enabled: boolean;
+}

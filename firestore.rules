@@ -34,5 +34,24 @@ service cloud.firestore {
       allow read: if true; // Publicly readable reference data
       allow write: if false; // Only admin via console for now
     }
+
+    // Skill bundles catalog (publicly browsable)
+    match /skillBundles/{bundleId} {
+      allow read: if true;
+      allow write: if false; // Admin-only via console
+    }
+
+    // User-installed skills
+    match /userSkills/{userId}/{bundleId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+
+    // Marketplace sources
+    match /marketplaceSources/{sourceId} {
+      allow read: if true;
+      allow write: if false; // Admin-only
+    }
   }
 }

@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { GoogleGenAI, Type, Content, ThinkingLevel } from "@google/genai";
 import { MATERIALS, JOINERY } from "./src/constants/reference-data.ts";
 import { validatePlan } from "./src/lib/validate-plan.ts";
+import { getAvailableBundles, getBundleById, searchBundles, DEFAULT_MARKETPLACE_SOURCE } from "./src/lib/skills-registry.ts";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import cors from "cors";
@@ -387,6 +388,162 @@ async function startServer() {
       console.error("Gemini API error:", error);
       next(error);
     }
+  });
+
+  // ─── Marketplace API ───────────────────────────────────────────────
+
+  // In-memory installed bundles per user (would be Firestore in production)
+  const installedBundles: Record<string, Array<{ bundleId: string; installedAt: string; version: string; enabled: boolean }>> = {};
+  const marketplaceSources: Array<{ id: string; name: string; owner: string; url: string; addedAt: string }> = [
+    DEFAULT_MARKETPLACE_SOURCE,
+  ];
+
+  // List marketplace sources
+  app.get("/api/marketplace/sources", (_req, res) => {
+    res.json({ sources: marketplaceSources });
+  });
+
+  // Add a marketplace source
+  app.post("/api/marketplace/sources", (req, res) => {
+    const { owner, repo } = req.body;
+    if (!owner || !repo) {
+      res.status(400).json({ error: "Missing required fields: owner, repo" });
+      return;
+    }
+    const existing = marketplaceSources.find((s) => s.url === `${owner}/${repo}`);
+    if (existing) {
+      res.json({ message: "Source already exists", source: existing });
+      return;
+    }
+    const source = {
+      id: `${owner}-${repo}`.toLowerCase(),
+      name: repo,
+      owner,
+      url: `${owner}/${repo}`,
+      addedAt: new Date().toISOString(),
+    };
+    marketplaceSources.push(source);
+    res.status(201).json({ message: "Marketplace source added", source });
+  });
+
+  // Browse available skill bundles
+  app.get("/api/marketplace/bundles", (req, res) => {
+    const search = req.query.search as string | undefined;
+    const bundles = search ? searchBundles(search) : getAvailableBundles();
+    res.json({ bundles });
+  });
+
+  // Get a specific bundle
+  app.get("/api/marketplace/bundles/:id", (req, res) => {
+    const bundle = getBundleById(req.params.id);
+    if (!bundle) {
+      res.status(404).json({ error: "Bundle not found" });
+      return;
+    }
+    res.json({ bundle });
+  });
+
+  // Install a skill bundle for a user
+  app.post("/api/marketplace/install", (req, res) => {
+    const { bundleId, userId } = req.body;
+    if (!bundleId || !userId) {
+      res.status(400).json({ error: "Missing required fields: bundleId, userId" });
+      return;
+    }
+    const bundle = getBundleById(bundleId);
+    if (!bundle) {
+      res.status(404).json({ error: "Bundle not found" });
+      return;
+    }
+    if (!installedBundles[userId]) {
+      installedBundles[userId] = [];
+    }
+    const alreadyInstalled = installedBundles[userId].find((b) => b.bundleId === bundleId);
+    if (alreadyInstalled) {
+      res.json({ message: "Bundle already installed", installed: alreadyInstalled });
+      return;
+    }
+    const entry = {
+      bundleId,
+      installedAt: new Date().toISOString(),
+      version: bundle.version,
+      enabled: true,
+    };
+    installedBundles[userId].push(entry);
+    res.status(201).json({ message: `Installed ${bundle.displayName}`, installed: entry });
+  });
+
+  // Uninstall a skill bundle
+  app.delete("/api/marketplace/install/:bundleId", (req, res) => {
+    const userId = req.query.userId as string;
+    if (!userId) {
+      res.status(400).json({ error: "Missing userId query parameter" });
+      return;
+    }
+    if (!installedBundles[userId]) {
+      res.status(404).json({ error: "No installed bundles for this user" });
+      return;
+    }
+    const idx = installedBundles[userId].findIndex((b) => b.bundleId === req.params.bundleId);
+    if (idx === -1) {
+      res.status(404).json({ error: "Bundle not installed" });
+      return;
+    }
+    installedBundles[userId].splice(idx, 1);
+    res.json({ message: "Bundle uninstalled" });
+  });
+
+  // Toggle a bundle on/off
+  app.patch("/api/marketplace/install/:bundleId", (req, res) => {
+    const { userId, enabled } = req.body;
+    if (!userId || enabled === undefined) {
+      res.status(400).json({ error: "Missing required fields: userId, enabled" });
+      return;
+    }
+    const userBundles = installedBundles[userId];
+    if (!userBundles) {
+      res.status(404).json({ error: "No installed bundles for this user" });
+      return;
+    }
+    const entry = userBundles.find((b) => b.bundleId === req.params.bundleId);
+    if (!entry) {
+      res.status(404).json({ error: "Bundle not installed" });
+      return;
+    }
+    entry.enabled = enabled;
+    res.json({ message: `Bundle ${enabled ? "enabled" : "disabled"}`, installed: entry });
+  });
+
+  // Get user's installed bundles
+  app.get("/api/marketplace/installed", (req, res) => {
+    const userId = req.query.userId as string;
+    if (!userId) {
+      res.status(400).json({ error: "Missing userId query parameter" });
+      return;
+    }
+    res.json({ installed: installedBundles[userId] || [] });
+  });
+
+  // Get active prompt injections for a user (used by plan generation)
+  app.get("/api/marketplace/active-skills", (req, res) => {
+    const userId = req.query.userId as string;
+    if (!userId) {
+      res.status(400).json({ error: "Missing userId query parameter" });
+      return;
+    }
+    const userBundles = installedBundles[userId] || [];
+    const activePrompts: string[] = [];
+    for (const ub of userBundles) {
+      if (!ub.enabled) continue;
+      const bundle = getBundleById(ub.bundleId);
+      if (!bundle) continue;
+      for (const skill of bundle.skills) {
+        if (skill.promptInjection) {
+          activePrompts.push(`[${skill.name}]: ${skill.promptInjection}`);
+        }
+      }
+    }
+    res.json({ activeSkillPrompts: activePrompts });
   });
 
   // API 404 handler
