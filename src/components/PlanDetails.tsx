@@ -1,8 +1,8 @@
 import { BuildPlan } from "../types";
-import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2, Image as ImageIcon } from "lucide-react";
+import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2, Image as ImageIcon, AlertTriangle, GitCompare, Calculator } from "lucide-react";
 import Markdown from "react-markdown";
 import { motion } from "motion/react";
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { auth } from "../lib/firebase";
 
 function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number }) {
@@ -43,8 +43,8 @@ function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number })
   if (imageUrl) {
     return (
       <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 aspect-video relative flex items-center justify-center">
-        <img 
-          src={imageUrl} 
+        <img
+          src={imageUrl}
           alt={`Step ${stepIndex + 1} illustration`}
           className="w-full h-full object-cover"
           referrerPolicy="no-referrer"
@@ -61,7 +61,7 @@ function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number })
       ) : (
         <p className="text-[10px] text-gray-400 mb-2">Illustration available</p>
       )}
-      <button 
+      <button
         onClick={handleGenerate}
         disabled={isLoading}
         className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-[10px] uppercase tracking-wider font-semibold text-gray-600 hover:text-orange-600 hover:border-orange-200 transition-all disabled:opacity-50"
@@ -73,15 +73,28 @@ function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number })
   );
 }
 
+function parseDimValue(value: string): number {
+  if (!value) return 0;
+  const trimmed = value.trim();
+  const fractionMatch = trimmed.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (fractionMatch) return Number(fractionMatch[1]) / Number(fractionMatch[2]);
+  const mixedMatch = trimmed.match(/^(\d+)\s+(\d+)\s*\/\s*(\d+)$/);
+  if (mixedMatch) return Number(mixedMatch[1]) + Number(mixedMatch[2]) / Number(mixedMatch[3]);
+  const num = parseFloat(trimmed);
+  return isNaN(num) ? 0 : num;
+}
+
 interface PlanDetailsProps {
   plan: BuildPlan;
   onSendMessage: (message: string) => void;
   isLoading: boolean;
   onStepHover?: (parts: string[] | null) => void;
+  onExportDXF?: (type: 'views' | 'parts') => void;
 }
 
-export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: PlanDetailsProps) {
+export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover, onExportDXF }: PlanDetailsProps) {
   const [input, setInput] = useState("");
+  const [showWarnings, setShowWarnings] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,16 +104,30 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
     }
   };
 
+  const { totalCost, totalBoardFeet } = useMemo(() => {
+    const cost = plan.bom.reduce((sum, item) => sum + (item.estimatedCost || 0), 0);
+    let boardFeet = 0;
+    for (const item of plan.cutList) {
+      const t = item.thicknessNum ?? parseDimValue(item.thickness);
+      const w = item.widthNum ?? parseDimValue(item.width);
+      const l = item.lengthNum ?? parseDimValue(item.length);
+      if (t > 0 && w > 0 && l > 0) {
+        boardFeet += (t * w * l * item.quantity) / 144;
+      }
+    }
+    return { totalCost: cost, totalBoardFeet: boardFeet };
+  }, [plan.bom, plan.cutList]);
+
   const downloadCSV = (type: 'cutlist' | 'bom') => {
     let content: string;
     let filename: string;
-    
+
     if (type === 'cutlist') {
-      content = `Part,Quantity,Thickness (${plan.units}),Width (${plan.units}),Length (${plan.units}),Material\n` + 
+      content = `Part,Quantity,Thickness (${plan.units}),Width (${plan.units}),Length (${plan.units}),Material\n` +
         plan.cutList.map(item => `"${item.part}",${item.quantity},"${item.thickness}","${item.width}","${item.length}","${item.material}"`).join("\n");
       filename = `${plan.name.replace(/\s+/g, '_')}_cutlist.csv`;
     } else {
-      content = "Item,Quantity,Unit,Estimated Cost\n" + 
+      content = "Item,Quantity,Unit,Estimated Cost\n" +
         plan.bom.map(item => `"${item.item}",${item.quantity},"${item.unit}",${item.estimatedCost}`).join("\n");
       filename = `${plan.name.replace(/\s+/g, '_')}_bom.csv`;
     }
@@ -114,7 +141,7 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="flex-1 flex flex-col bg-white"
@@ -123,16 +150,26 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
         <section className="space-y-4">
         <div className="flex items-center justify-between border-b border-gray-200 pb-4">
           <h2 className="text-3xl font-light serif italic">Specifications</h2>
-          <div className="flex gap-4">
+          <div className="flex gap-4 flex-wrap justify-end">
             <button onClick={() => downloadCSV('cutlist')} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-gray-500 hover:text-orange-600 transition-colors">
-              <Download size={14} /> Export Cut List
+              <Download size={14} /> Cut List CSV
             </button>
             <button onClick={() => downloadCSV('bom')} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-gray-500 hover:text-orange-600 transition-colors">
-              <Download size={14} /> Export BOM
+              <Download size={14} /> BOM CSV
             </button>
+            {onExportDXF && (
+              <>
+                <button onClick={() => onExportDXF('views')} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-gray-500 hover:text-blue-600 transition-colors">
+                  <Download size={14} /> DXF Views
+                </button>
+                <button onClick={() => onExportDXF('parts')} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-gray-500 hover:text-blue-600 transition-colors">
+                  <Download size={14} /> DXF Parts
+                </button>
+              </>
+            )}
           </div>
         </div>
-        
+
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 md:gap-8">
           <div>
             <p className="text-[10px] uppercase text-gray-400 font-mono mb-1">Style</p>
@@ -156,6 +193,47 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
           </div>
         </div>
       </section>
+
+      {/* Validation Warnings */}
+      {plan.warnings && plan.warnings.length > 0 && (
+        <section className="space-y-2">
+          <button
+            onClick={() => setShowWarnings(!showWarnings)}
+            className="flex items-center gap-3 w-full p-4 bg-yellow-50 border border-yellow-200 rounded-xl hover:bg-yellow-100 transition-colors"
+          >
+            <AlertTriangle className="text-yellow-600 shrink-0" size={18} />
+            <span className="text-sm font-medium text-yellow-800 flex-1 text-left">
+              {plan.warnings.length} validation {plan.warnings.length === 1 ? 'notice' : 'notices'}
+            </span>
+            <span className="text-[10px] uppercase tracking-wider text-yellow-600 font-semibold">
+              {showWarnings ? "Hide" : "Show"}
+            </span>
+          </button>
+          {showWarnings && (
+            <div className="p-4 bg-yellow-50/50 border border-yellow-100 rounded-xl space-y-2">
+              {plan.warnings.map((warning, i) => (
+                <p key={i} className="text-xs text-yellow-800 flex gap-2">
+                  <span className="text-yellow-500 shrink-0">&#x2022;</span>
+                  {warning}
+                </p>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Changes Summary */}
+      {plan.changesSummary && (
+        <section className="space-y-4 bg-green-50/50 p-6 rounded-2xl border border-green-100">
+          <div className="flex items-center gap-3">
+            <GitCompare className="text-green-600" size={20} />
+            <h3 className="text-xl font-medium text-green-900">Changes Made</h3>
+          </div>
+          <div className="text-sm text-green-800 leading-relaxed whitespace-pre-wrap">
+            <Markdown>{plan.changesSummary}</Markdown>
+          </div>
+        </section>
+      )}
 
       {plan.actionPlan && (
         <section className="space-y-4 bg-blue-50/50 p-6 rounded-2xl border border-blue-100">
@@ -185,6 +263,12 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
         <div className="flex items-center gap-3">
           <FileText className="text-orange-600" size={20} />
           <h3 className="text-xl font-medium">Cut List ({plan.units})</h3>
+          {totalBoardFeet > 0 && (
+            <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-500 font-mono bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
+              <Calculator size={12} />
+              {totalBoardFeet.toFixed(1)} board feet
+            </span>
+          )}
         </div>
         <div className="border border-gray-200 rounded-lg overflow-hidden">
           <table className="w-full text-left text-sm">
@@ -215,9 +299,16 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
       </section>
 
       <section className="space-y-6">
-        <div className="flex items-center gap-3">
-          <Package className="text-orange-600" size={20} />
-          <h3 className="text-xl font-medium">Bill of Materials</h3>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Package className="text-orange-600" size={20} />
+            <h3 className="text-xl font-medium">Bill of Materials</h3>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] uppercase text-gray-400 font-mono mb-0.5">Estimated Total</p>
+            <p className="font-mono text-lg font-semibold text-gray-800">${totalCost.toFixed(2)}</p>
+            <p className="text-[9px] text-gray-400 italic">Prices are estimates only</p>
+          </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {plan.bom.map((item, i) => (
@@ -243,10 +334,10 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
             const text = isString ? step : step.text;
             const activeParts = isString ? null : step.activeParts;
             const imagePrompt = isString ? null : step.imagePrompt;
-            
+
             return (
-              <div 
-                key={i} 
+              <div
+                key={i}
                 className="flex flex-col md:flex-row gap-6 group cursor-default"
                 onMouseEnter={() => onStepHover?.(activeParts || null)}
               >

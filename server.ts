@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, Type, Content, ThinkingLevel } from "@google/genai";
-import { MATERIALS, JOINERY } from "./src/constants/reference-data.ts";
+import { MATERIALS, JOINERY, HARDWARE, LUMBER_STANDARDS, STANDARD_SHEET_SIZES, STANDARD_BOARD_LENGTHS } from "./src/constants/reference-data.ts";
 import { validatePlan } from "./src/lib/validate-plan.ts";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
@@ -40,8 +40,11 @@ const planSchema = {
           width: { type: Type.STRING },
           length: { type: Type.STRING },
           material: { type: Type.STRING },
+          thicknessNum: { type: Type.NUMBER, description: "Numeric value of thickness in plan units (e.g., 0.75 for 3/4 inch)" },
+          widthNum: { type: Type.NUMBER, description: "Numeric value of width in plan units" },
+          lengthNum: { type: Type.NUMBER, description: "Numeric value of length in plan units" },
         },
-        required: ["part", "quantity", "thickness", "width", "length", "material"],
+        required: ["part", "quantity", "thickness", "width", "length", "material", "thicknessNum", "widthNum", "lengthNum"],
       },
     },
     bom: {
@@ -88,6 +91,8 @@ const planSchema = {
           x: { type: Type.NUMBER },
           y: { type: Type.NUMBER },
           z: { type: Type.NUMBER },
+          material: { type: Type.STRING, description: "Material of this part, matching the cutList material" },
+          partGroup: { type: Type.STRING, description: "Logical group (e.g., 'legs', 'top', 'apron', 'shelf', 'side')" },
         },
         required: ["name", "width", "height", "depth", "x", "y", "z"],
       },
@@ -107,8 +112,11 @@ const responseSchema = {
   required: ["isClarifying"]
 };
 
-// Pre-build reference data string once at startup (not per-request)
-const referenceDataContext = `AVAILABLE MATERIALS:\n${JSON.stringify(MATERIALS, null, 2)}\n\nAVAILABLE JOINERY:\n${JSON.stringify(JOINERY, null, 2)}`;
+// Pre-build reference data strings once at startup (not per-request)
+const materialsContext = `\nAVAILABLE MATERIALS (with real-world properties and pricing):\n${JSON.stringify(MATERIALS, null, 2)}`;
+const joineryContext = `\nAVAILABLE JOINERY METHODS:\n${JSON.stringify(JOINERY, null, 2)}`;
+const hardwareContext = `\nAVAILABLE HARDWARE (use these for accurate BOM pricing):\n${JSON.stringify(HARDWARE, null, 2)}`;
+const lumberContext = `\nLUMBER STANDARDS (Nominal → Actual Dimensions):\n${JSON.stringify(LUMBER_STANDARDS, null, 2)}\n\nStandard Sheet Sizes: ${JSON.stringify(STANDARD_SHEET_SIZES)}\nStandard Board Lengths (inches): ${STANDARD_BOARD_LENGTHS.join(", ")}`;
 
 function sanitizeUserContent(text: string): string {
   // Strip common prompt injection patterns
@@ -169,6 +177,8 @@ Ensure the design, materials, dimensions, and joinery strictly reflect the chose
 6. CONTEMPORARY: Sleek, geometric, floating elements. Mixed materials (glass, metal, engineered wood). Joinery: Hidden, hardware-based (cam locks, biscuits).
 7. TRADITIONAL: Ornate details, cabriole legs, molding, routing, carving. Woods: Mahogany, Cherry. Joinery: Classic complex joinery.
 
+${materialsContext}${joineryContext}${hardwareContext}${lumberContext}
+
 --- FURNITURE KNOWLEDGE BASE & STANDARDS ---
 1. Ergonomics & Standard Dimensions:
    - Dining/Desk Table Height: 28" - 30" (71-76cm)
@@ -215,7 +225,37 @@ For each part, provide its dimensions (width, height, depth) and its center posi
 - The ground plane is at y = 0. Position the furniture so the bottom of the lowest parts (e.g., leg bottoms) sit at y = 0 (meaning the center y of a leg = leg_height / 2).
 - Parts must not overlap in 3D space — verify no two parts occupy the same volume.
 - The center of the assembled furniture should be approximately at x = 0, z = 0.
-- Use the same units for 3D coordinates as the rest of the plan.`;
+- Use the same units for 3D coordinates as the rest of the plan.
+
+--- DIMENSION MAPPING RULES (cutList → modelParts) ---
+- cutList dimensions are: thickness (T), width (W), length (L). You MUST also provide thicknessNum, widthNum, lengthNum as parsed numeric values.
+- modelPart dimensions are: width (X-axis), height (Y-axis), depth (Z-axis)
+- For VERTICAL parts (legs, uprights): T→width, W→depth, L→height
+- For HORIZONTAL parts (tops, shelves, stretchers): T→height, W→depth, L→width
+- For SIDE panels: T→depth, W→width, L→height
+- All dimensions must be in the same units as the plan's "units" field.
+- cutList string dimensions must be numeric (e.g., "0.75" or "3/4", never "3/4 inch").
+- IMPORTANT: Use ACTUAL lumber dimensions (e.g., a 2x4 is actually 1.5" x 3.5"). Refer to the lumber standards above.
+
+--- PART NAMING RULES ---
+- Each modelPart name must clearly derive from the cutList part name.
+- For parts with quantity > 1, append a positional descriptor: "Front Left Leg", "Front Right Leg", "Back Left Leg", "Back Right Leg".
+- Use consistent directional terms: Front/Back, Left/Right, Top/Bottom, Inner/Outer.
+- Names must be unique across ALL modelParts — no duplicates.
+- Optionally include a 'partGroup' (e.g., "legs", "top", "apron", "shelf") and 'material' matching the cutList material.
+
+--- PRE-GENERATION VERIFICATION CHECKLIST ---
+BEFORE finalizing your JSON output, you MUST verify:
+1. Total modelParts count = sum of all cutList quantities
+2. Each modelPart's 3 dimensions match its cutList source dimensions (using the mapping rules above) within 0.1 units
+3. No two modelParts occupy the same volume (AABB overlap check)
+4. The bounding box of all modelParts matches the stated 'dimensions' field
+5. All parts touching the ground have their center y = partHeight / 2
+6. BOM includes all wood/materials from the cutList PLUS all hardware referenced in instructions
+7. BOM costs are realistic and based on the hardware/materials reference data provided above
+8. Instructions reference every cutList part at least once
+9. All estimatedCost values are > $0
+10. Horizontal parts spanning > 36" have support (apron, stretcher, or center support) underneath`;
 }
 
 
@@ -343,9 +383,10 @@ async function startServer() {
       });
 
       // Prepend reference data as context (outside system prompt to reduce per-request token cost)
+      const referenceDataContext = `${materialsContext}${joineryContext}${hardwareContext}${lumberContext}`;
       const contentsWithContext: Content[] = [
         { role: "user", parts: [{ text: `[Reference Data for this session]\n${referenceDataContext}` }] },
-        { role: "model", parts: [{ text: "I have the materials and joinery reference data loaded. I'm ready to help design furniture. What would you like to build?" }] },
+        { role: "model", parts: [{ text: "I have the materials, joinery, hardware, and lumber reference data loaded. I'm ready to help design furniture. What would you like to build?" }] },
         ...contents,
       ];
 
@@ -389,14 +430,29 @@ async function startServer() {
       // Validate the plan
       let validation = validatePlan(planData);
 
-      // Auto-retry once if there are errors
-      if (validation.errors.length > 0) {
-        console.log("Plan validation failed, retrying with corrections:", validation.errors);
-        const correctionMessage = `Your previous response had these issues that need fixing:\n${validation.errors.map((e) => `- ${e}`).join("\n")}\n${validation.warnings.length > 0 ? `\nWarnings:\n${validation.warnings.map((w) => `- ${w}`).join("\n")}` : ""}\n\nPlease regenerate the plan with these issues corrected.`;
+      // Auto-retry up to 2 times for errors/warnings
+      let retryCount = 0;
+      const maxRetries = 2;
+      let lastResponseText = response.text;
+
+      while (retryCount < maxRetries && (validation.errors.length > 0 || (retryCount === 0 && validation.warnings.length > 0))) {
+        const issueType = validation.errors.length > 0 ? "errors" : "warnings";
+        console.log(`Plan validation ${issueType} (retry ${retryCount + 1}/${maxRetries}):`, validation.errors, validation.warnings);
+
+        const correctionMessage = [
+          `Your previous response had these issues that need fixing:`,
+          ...validation.errors.map((e) => `- ERROR: ${e}`),
+          ...validation.warnings.map((w) => `- WARNING: ${w}`),
+          `\nPlease regenerate the plan with ALL these issues corrected. Pay special attention to:`,
+          `- modelParts count must exactly match sum of cutList quantities`,
+          `- Each modelPart dimension must match its corresponding cutList dimensions`,
+          `- No overlapping parts in 3D space`,
+          `- BOM must cover all materials and hardware`,
+        ].join("\n");
 
         const retryContents: Content[] = [
           ...contentsWithContext,
-          { role: "model", parts: [{ text: response.text }] },
+          { role: "model", parts: [{ text: lastResponseText }] },
           { role: "user", parts: [{ text: correctionMessage }] },
         ];
 
@@ -432,7 +488,12 @@ async function startServer() {
           return;
         }
         planData = retryData.plan;
+        lastResponseText = retryResponse.text;
         validation = validatePlan(planData);
+        retryCount++;
+
+        // If errors are resolved, only continue for warnings on first retry
+        if (validation.errors.length === 0 && retryCount >= 1) break;
       }
 
       // Include any remaining warnings in the response
