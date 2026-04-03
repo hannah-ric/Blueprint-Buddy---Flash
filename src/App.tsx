@@ -14,6 +14,7 @@ import { Hammer, Layout, Boxes, History, ChevronLeft } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "./lib/utils";
 import { handleFirestoreError, OperationType } from "./lib/firestore-errors";
+import { generateViewsDXF, generatePartsDXF, downloadDXF } from "./lib/dxf-export";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -206,13 +207,24 @@ export default function App() {
                   {currentPlan ? (
                     <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                       <div className="w-full md:w-1/2 h-1/2 md:h-full border-r border-gray-200">
-                        <ThreeDViewer name={currentPlan.name} parts={currentPlan.modelParts} activeParts={activeStepParts} />
+                        <ThreeDViewer name={currentPlan.name} parts={currentPlan.modelParts} activeParts={activeStepParts} primaryMaterial={currentPlan.material} />
                       </div>
-                      <PlanDetails 
-                        plan={currentPlan} 
+                      <PlanDetails
+                        plan={currentPlan}
                         onSendMessage={handleSendMessage}
                         isLoading={isLoading}
                         onStepHover={setActiveStepParts}
+                        onExportDXF={(type) => {
+                          if (!currentPlan) return;
+                          const filename = currentPlan.name.replace(/\s+/g, '_');
+                          if (type === 'views') {
+                            const content = generateViewsDXF(currentPlan);
+                            if (content) downloadDXF(content, `${filename}_views.dxf`);
+                          } else {
+                            const content = generatePartsDXF(currentPlan);
+                            if (content) downloadDXF(content, `${filename}_parts.dxf`);
+                          }
+                        }}
                       />
                     </div>
                   ) : (

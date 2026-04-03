@@ -5,6 +5,9 @@ export interface CutListItem {
   width: string;
   length: string;
   material: string;
+  thicknessNum?: number;
+  widthNum?: number;
+  lengthNum?: number;
 }
 
 export interface BOMItem {
@@ -22,6 +25,8 @@ export interface ModelPart {
   x: number;
   y: number;
   z: number;
+  material?: string;
+  partGroup?: string;
 }
 
 export interface InstructionStep {
@@ -37,6 +42,7 @@ export interface BuildPlan {
   description: string;
   actionPlan?: string;
   designNotes?: string;
+  changesSummary?: string;
   dimensions: string;
   material: string;
   joinery: string;
@@ -47,6 +53,7 @@ export interface BuildPlan {
   bom: BOMItem[];
   instructions: (InstructionStep | string)[];
   modelParts?: ModelPart[];
+  warnings?: string[];
   createdAt: string;
 }
 
