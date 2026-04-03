@@ -27,7 +27,7 @@ export interface ModelPart {
 export interface InstructionStep {
   text: string;
   activeParts?: string[];
-  imageUrl?: string;
+  imagePrompt?: string;
 }
 
 export interface BuildPlan {
@@ -35,6 +35,7 @@ export interface BuildPlan {
   userId: string;
   name: string;
   description: string;
+  actionPlan?: string;
   designNotes?: string;
   dimensions: string;
   material: string;

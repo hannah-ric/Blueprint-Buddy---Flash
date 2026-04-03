@@ -19,8 +19,9 @@ const __dirname = path.dirname(__filename);
 const planSchema = {
   type: Type.OBJECT,
   properties: {
-    name: { type: Type.STRING, description: "Name of the furniture piece" },
+    name: { type: Type.STRING, description: "Name of the furniture piece (max 50 characters)" },
     description: { type: Type.STRING, description: "Brief description of the design" },
+    actionPlan: { type: Type.STRING, description: "A detailed, step-by-step action plan and research summary developed before drafting the final design. This should show thorough examination of the request, structural considerations, and the planned approach." },
     designNotes: { type: Type.STRING, description: "Educational, user-centric explanation of the design choices, structural reasoning, and any modifications made. Keep it simple, encouraging, and easy to understand." },
     dimensions: { type: Type.STRING, description: "Overall dimensions (e.g., 48x18x30 in)" },
     material: { type: Type.STRING, description: "Primary material (e.g., Walnut, Oak)" },
@@ -65,7 +66,7 @@ const planSchema = {
             items: { type: Type.STRING },
             description: "An array of exact modelPart names that are being assembled or focused on in this step. Used to highlight parts in the 3D viewer."
           },
-          imageUrl: {
+          imagePrompt: {
             type: Type.STRING,
             description: "A detailed visual description of this assembly step that can be used to generate an illustration. Describe the parts, how they fit together, tools being used, and the perspective. Be highly descriptive."
           }
@@ -91,7 +92,7 @@ const planSchema = {
     },
     changesSummary: { type: Type.STRING, description: "When modifying a previous design, list every specific change made (e.g., 'Increased leg height from 28\" to 32\", updated cut list and modelParts accordingly'). Leave empty for first-time designs." },
   },
-  required: ["name", "description", "designNotes", "dimensions", "material", "joinery", "units", "cutList", "bom", "instructions", "modelParts"],
+  required: ["name", "description", "actionPlan", "designNotes", "dimensions", "material", "joinery", "units", "cutList", "bom", "instructions", "modelParts"],
 };
 
 const responseSchema = {
@@ -117,6 +118,10 @@ When 'isClarifying' is true, provide a conversational response in the 'message' 
 Do NOT generate the 'plan' object if you are asking clarifying questions.
 Only set 'isClarifying' to false and generate the full 'plan' when you have enough information to proceed.
 
+*** RESEARCH & ACTION PLAN ***
+Before generating the final cut list and instructions, you must thoroughly examine the user's request, research standard dimensions and structural requirements, and develop an action plan.
+Document this in the 'actionPlan' field. This should read like a master woodworker's initial sketch and brainstorming session. Think about the physics of the piece, the proportions, and the step-by-step approach you will take to design it.
+
 *** DESIGN REASONING & EDUCATIONAL EXPLANATION ***
 Before finalizing the plan, you MUST perform a structural and practical analysis of your design concept.
 Document this process in the 'designNotes' field in a user-centric, educational, and simple way:
@@ -127,7 +132,7 @@ Document this process in the 'designNotes' field in a user-centric, educational,
 If the user asks for modifications (e.g., "make it taller", "change to walnut"), apply them to the previous design context.
 When modifying an existing design, populate the 'changesSummary' field with a bullet-point list of every specific change you made (dimensions changed, parts added/removed, materials swapped, positions adjusted). Be precise with before/after values. For first-time designs, leave changesSummary empty.
 Include a precise cut list, bill of materials (BOM), and step-by-step assembly instructions.
-IMPORTANT: The assembly instructions MUST be an array of objects, where each object has a 'text' field for the instruction step, an optional 'activeParts' array containing the exact names of the modelParts involved in that step, and an optional 'imageUrl' field containing a highly descriptive visual prompt for generating an illustration of the step.
+IMPORTANT: The assembly instructions MUST be an array of objects, where each object has a 'text' field for the instruction step, an optional 'activeParts' array containing the exact names of the modelParts involved in that step, and an optional 'imagePrompt' field containing a highly descriptive visual prompt for generating an illustration of the step.
 Ensure all dimensions are realistic and joinery is structurally sound.
 If the user provides a reference image, analyze it for style, proportions, materials, and visible joinery, then incorporate those observations into the design. Describe what you see in the image in your designNotes.
 
@@ -206,6 +211,7 @@ For each part, provide its dimensions (width, height, depth) and its center posi
 
 async function startServer() {
   const app = express();
+  app.set('trust proxy', 1);
   const PORT = 3000;
 
   app.use(express.json({ limit: "10mb" }));
@@ -223,6 +229,7 @@ async function startServer() {
     message: { error: "Too many requests from this IP, please try again after 15 minutes" },
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { xForwardedForHeader: false },
   });
 
   // Health check
@@ -264,10 +271,16 @@ async function startServer() {
 
     try {
       const contents: Content[] = messages.map((msg: { role: string; content: string; imageData?: string; imageMimeType?: string; planData?: string }) => {
-        const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: msg.content }];
+        const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
+        
+        if (msg.content) {
+          parts.push({ text: msg.content });
+        }
+        
         if (msg.planData) {
           parts.push({ text: `\n\n[SYSTEM: The current plan JSON is provided below for context. If the user requests a change, modify this plan.]\n${msg.planData}` });
         }
+        
         if (msg.imageData && msg.imageMimeType) {
           parts.push({
             inlineData: {
@@ -276,6 +289,11 @@ async function startServer() {
             },
           });
         }
+
+        if (parts.length === 0) {
+          parts.push({ text: "Please analyze this request." });
+        }
+
         return { role: msg.role, parts };
       });
 
@@ -354,41 +372,6 @@ async function startServer() {
       // Include any remaining warnings in the response
       const allWarnings = [...validation.errors, ...validation.warnings];
 
-      // Generate images for instructions
-      if (planData.instructions) {
-        try {
-          const imagePromises = planData.instructions.map(async (step: { text: string; activeParts?: string[]; imageUrl?: string }) => {
-            if (step.imageUrl) {
-              try {
-                const imageResponse = await ai.models.generateImages({
-                  model: 'imagen-4.0-generate-001',
-                  prompt: `A clear, professional, minimalist 3D illustration of a woodworking assembly step. ${step.imageUrl}. White background, clean lines, instructional style, isometric view. Show the parts being assembled clearly.`,
-                  config: {
-                    numberOfImages: 1,
-                    outputMimeType: 'image/jpeg',
-                    aspectRatio: '1:1',
-                  },
-                });
-                
-                if (imageResponse.generatedImages && imageResponse.generatedImages.length > 0) {
-                  step.imageUrl = `data:image/jpeg;base64,${imageResponse.generatedImages[0].image.imageBytes}`;
-                } else {
-                  step.imageUrl = undefined;
-                }
-              } catch (imgError) {
-                console.error("Failed to generate image for step:", imgError);
-                step.imageUrl = undefined;
-              }
-            }
-            return step;
-          });
-          
-          planData.instructions = await Promise.all(imagePromises);
-        } catch (error) {
-          console.error("Error generating instruction images:", error);
-        }
-      }
-
       res.json({
         isClarifying: false,
         plan: {
@@ -417,6 +400,53 @@ async function startServer() {
     res.status(500).json({ 
       error: err instanceof Error && err.message === "AbortError" ? "Request timed out" : "Internal server error" 
     });
+  });
+
+  const imageLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    message: { error: "Too many image requests from this IP" },
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: { xForwardedForHeader: false },
+  });
+
+  app.post("/api/generate-image", imageLimiter, async (req, res) => {
+    const { prompt } = req.body;
+    if (!prompt) {
+      res.status(400).json({ error: "Prompt is required" });
+      return;
+    }
+
+    const apiKey = process.env.API_KEY_DEV || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(500).json({ error: "API Key is not configured" });
+      return;
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+
+    try {
+      const imageResponse = await ai.models.generateImages({
+        model: 'gemini-2.5-flash-image',
+        prompt: `A clear, professional, minimalist 3D illustration of a woodworking assembly step. ${prompt}. White background, clean lines, instructional style, isometric view. Show the parts being assembled clearly.`,
+        config: {
+          numberOfImages: 1,
+          outputMimeType: 'image/jpeg',
+          aspectRatio: '1:1',
+        },
+      });
+      
+      if (imageResponse.generatedImages && imageResponse.generatedImages.length > 0) {
+        const base64 = imageResponse.generatedImages[0].image.imageBytes;
+        res.json({ imageUrl: `data:image/jpeg;base64,${base64}` });
+      } else {
+        res.status(500).json({ error: "No image generated" });
+      }
+    } catch (error) {
+      console.error("Image generation error:", error);
+      res.status(500).json({ error: "Failed to generate image" });
+    }
   });
 
   // Vite middleware for development

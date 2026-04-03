@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Loader2, User, Bot, Layout } from "lucide-react";
+import { Send, Loader2, User, Bot, Layout, ImagePlus, X } from "lucide-react";
 import { motion } from "motion/react";
 import Markdown from "react-markdown";
 import { cn } from "../lib/utils";
 import { ChatMessage } from "../types";
 
 interface ChatInterfaceProps {
-  onSendMessage: (message: string) => void;
+  onSendMessage: (message: string, imageData?: string, imageMimeType?: string) => void;
   messages: ChatMessage[];
   isLoading: boolean;
   onViewPlan?: () => void;
@@ -30,7 +30,10 @@ const STYLES = [
 
 export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, className, experienceLevel, setExperienceLevel, designStyle, setDesignStyle }: ChatInterfaceProps) {
   const [input, setInput] = useState("");
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -38,11 +41,48 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
     }
   }, [messages]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedImage(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeImage = () => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (input.trim() && !isLoading) {
-      onSendMessage(input);
+    if ((input.trim() || selectedImage) && !isLoading) {
+      let imageData: string | undefined;
+      let imageMimeType: string | undefined;
+
+      if (selectedImage) {
+        const reader = new FileReader();
+        const base64Promise = new Promise<string>((resolve) => {
+          reader.onloadend = () => {
+            const base64String = (reader.result as string).split(',')[1];
+            resolve(base64String);
+          };
+        });
+        reader.readAsDataURL(selectedImage);
+        imageData = await base64Promise;
+        imageMimeType = selectedImage.type;
+      }
+
+      onSendMessage(input, imageData, imageMimeType);
       setInput("");
+      removeImage();
     }
   };
 
@@ -74,6 +114,11 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
             </div>
             <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", 
               msg.role === "user" ? "bg-orange-600 text-white rounded-tr-none" : "bg-gray-100 text-gray-800 rounded-tl-none")}>
+              {msg.imageData && (
+                <div className="mb-2 rounded-lg overflow-hidden border border-white/20">
+                  <img src={`data:${msg.imageMimeType};base64,${msg.imageData}`} alt="Uploaded reference" className="w-full h-auto max-h-48 object-cover" />
+                </div>
+              )}
               <div className="markdown-body prose prose-sm prose-p:leading-relaxed max-w-none">
                 <Markdown>{msg.content}</Markdown>
               </div>
@@ -138,21 +183,52 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
             ))}
           </div>
         </div>
-        <div className="relative">
+        
+        {imagePreview && (
+          <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-gray-200">
+            <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+            <button
+              type="button"
+              onClick={removeImage}
+              className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
+        <div className="relative flex items-center gap-2">
           <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Describe your project..."
-            className="w-full pl-4 pr-12 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all text-sm"
+            type="file"
+            accept="image/*"
+            className="hidden"
+            ref={fileInputRef}
+            onChange={handleImageSelect}
           />
           <button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-orange-600 hover:bg-orange-50 rounded-lg disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="p-3 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-xl transition-colors"
+            title="Upload reference image"
           >
-            <Send size={18} />
+            <ImagePlus size={20} />
           </button>
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Describe your project..."
+              className="w-full pl-4 pr-12 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all text-sm"
+            />
+            <button
+              type="submit"
+              disabled={isLoading || (!input.trim() && !selectedImage)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-orange-600 hover:bg-orange-50 rounded-lg disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
+            >
+              <Send size={18} />
+            </button>
+          </div>
         </div>
       </form>
     </div>

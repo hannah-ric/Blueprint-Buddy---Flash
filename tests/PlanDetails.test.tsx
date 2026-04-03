@@ -8,6 +8,7 @@ const mockPlan = {
   name: "Test Plan",
   title: "Test Plan",
   description: "A test plan",
+  actionPlan: "A test action plan",
   dimensions: "10x10x10",
   estimatedTime: "1 hour",
   difficulty: "Beginner",
@@ -20,7 +21,7 @@ const mockPlan = {
   cutList: [{ part: "Leg", quantity: 4, thickness: "1", width: "2", length: "10", material: "Pine" }],
   modelParts: [{ name: "Leg 1", width: 2, height: 10, depth: 1, x: 0, y: 5, z: 0 }],
   bom: [{ item: "Screws", quantity: 10, unit: "box", estimatedCost: 5 }],
-  instructions: [{ text: "Attach leg", activeParts: ["Leg 1"], imageUrl: "test.jpg" }],
+  instructions: [{ text: "Attach leg", activeParts: ["Leg 1"], imagePrompt: "test.jpg" }],
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString()
 };
@@ -59,9 +60,8 @@ describe('PlanDetails', () => {
     
     expect(screen.getByText('Attach leg')).toBeDefined();
     expect(screen.getByText('Leg 1')).toBeDefined();
-    const img = screen.getByAltText('Step 1 illustration');
-    expect(img).toBeDefined();
-    expect(img.getAttribute('src')).toBe('test.jpg');
+    const btn = screen.getByText('Generate Image');
+    expect(btn).toBeDefined();
   });
 
   it('handles message submission', () => {

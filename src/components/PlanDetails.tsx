@@ -2,7 +2,71 @@ import { BuildPlan } from "../types";
 import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2, Image as ImageIcon } from "lucide-react";
 import Markdown from "react-markdown";
 import { motion } from "motion/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number }) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    setImageUrl(null);
+    setError(false);
+  }, [prompt]);
+
+  const handleGenerate = async () => {
+    setIsLoading(true);
+    setError(false);
+    try {
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt })
+      });
+      if (!res.ok) throw new Error('Failed to generate');
+      const data = await res.json();
+      if (data.imageUrl) {
+        setImageUrl(data.imageUrl);
+      }
+    } catch {
+      setError(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (imageUrl) {
+    return (
+      <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 aspect-video relative flex items-center justify-center">
+        <img 
+          src={imageUrl} 
+          alt={`Step ${stepIndex + 1} illustration`}
+          className="w-full h-full object-cover"
+          referrerPolicy="no-referrer"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 aspect-video relative flex flex-col items-center justify-center p-4 text-center group">
+      <ImageIcon size={32} className="text-gray-300 mb-2 group-hover:text-orange-400 transition-colors" />
+      {error ? (
+        <p className="text-[10px] text-red-500 mb-2">Failed to generate. Try again.</p>
+      ) : (
+        <p className="text-[10px] text-gray-400 mb-2">Illustration available</p>
+      )}
+      <button 
+        onClick={handleGenerate}
+        disabled={isLoading}
+        className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-[10px] uppercase tracking-wider font-semibold text-gray-600 hover:text-orange-600 hover:border-orange-200 transition-all disabled:opacity-50"
+      >
+        {isLoading ? <Loader2 size={12} className="animate-spin inline mr-1" /> : null}
+        {isLoading ? "Generating..." : "Generate Image"}
+      </button>
+    </div>
+  );
+}
 
 interface PlanDetailsProps {
   plan: BuildPlan;
@@ -28,11 +92,11 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
     
     if (type === 'cutlist') {
       content = `Part,Quantity,Thickness (${plan.units}),Width (${plan.units}),Length (${plan.units}),Material\n` + 
-        plan.cutList.map(item => `${item.part},${item.quantity},${item.thickness},${item.width},${item.length},${item.material}`).join("\n");
+        plan.cutList.map(item => `"${item.part}",${item.quantity},"${item.thickness}","${item.width}","${item.length}","${item.material}"`).join("\n");
       filename = `${plan.name.replace(/\s+/g, '_')}_cutlist.csv`;
     } else {
       content = "Item,Quantity,Unit,Estimated Cost\n" + 
-        plan.bom.map(item => `${item.item},${item.quantity},${item.unit},${item.estimatedCost}`).join("\n");
+        plan.bom.map(item => `"${item.item}",${item.quantity},"${item.unit}",${item.estimatedCost}`).join("\n");
       filename = `${plan.name.replace(/\s+/g, '_')}_bom.csv`;
     }
 
@@ -87,6 +151,18 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
           </div>
         </div>
       </section>
+
+      {plan.actionPlan && (
+        <section className="space-y-4 bg-blue-50/50 p-6 rounded-2xl border border-blue-100">
+          <div className="flex items-center gap-3">
+            <Lightbulb className="text-blue-600" size={20} />
+            <h3 className="text-xl font-medium text-blue-900">Research & Action Plan</h3>
+          </div>
+          <div className="text-sm text-blue-800 leading-relaxed whitespace-pre-wrap markdown-body prose prose-sm prose-blue max-w-none">
+            <Markdown>{plan.actionPlan}</Markdown>
+          </div>
+        </section>
+      )}
 
       {plan.designNotes && (
         <section className="space-y-4 bg-orange-50/50 p-6 rounded-2xl border border-orange-100">
@@ -161,7 +237,7 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
             const isString = typeof step === 'string';
             const text = isString ? step : step.text;
             const activeParts = isString ? null : step.activeParts;
-            const imageUrl = isString ? null : step.imageUrl;
+            const imagePrompt = isString ? null : step.imagePrompt;
             
             return (
               <div 
@@ -186,24 +262,9 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: Pla
                     )}
                   </div>
                 </div>
-                {imageUrl && (
+                {imagePrompt && (
                   <div className="md:w-1/3 shrink-0">
-                    <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 aspect-video relative flex items-center justify-center">
-                      <img 
-                        src={imageUrl} 
-                        alt={`Step ${i + 1} illustration`}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                        onError={(e) => {
-                          const target = e.target as HTMLImageElement;
-                          target.style.display = 'none';
-                          target.parentElement?.classList.add('fallback-icon');
-                        }}
-                      />
-                      <div className="absolute inset-0 items-center justify-center text-gray-300 hidden [.fallback-icon_&]:flex">
-                        <ImageIcon size={32} />
-                      </div>
-                    </div>
+                    <StepImage prompt={imagePrompt} stepIndex={i} />
                   </div>
                 )}
               </div>

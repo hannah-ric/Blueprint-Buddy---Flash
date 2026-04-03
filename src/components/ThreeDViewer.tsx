@@ -12,7 +12,7 @@ interface ThreeDViewerProps {
   activeParts?: string[] | null;
 }
 
-function AnimatedPart({ part, isExploded, isActive }: { part: ModelPart, isExploded: boolean, isActive: boolean }) {
+function AnimatedPart({ part, isExploded, isActive, resetTrigger }: { part: ModelPart, isExploded: boolean, isActive: boolean, resetTrigger: number }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [manualPos, setManualPos] = useState<THREE.Vector3 | null>(null);
@@ -32,11 +32,11 @@ function AnimatedPart({ part, isExploded, isActive }: { part: ModelPart, isExplo
   const targetY = isExploded ? (py * explodeFactor) + yOffset : py;
   const targetZ = isExploded ? pz * explodeFactor : pz;
 
-  // Reset manual position when explosion state changes
+  // Reset manual position when explosion state or resetTrigger changes
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setManualPos(null);
-  }, [isExploded]);
+  }, [isExploded, resetTrigger]);
 
   useFrame((_, delta) => {
     if (meshRef.current && !isDragging && !manualPos) {
@@ -70,14 +70,14 @@ function AnimatedPart({ part, isExploded, isActive }: { part: ModelPart, isExplo
   );
 }
 
-function DynamicFurniture({ parts, isExploded, activeParts }: { parts: ModelPart[], isExploded: boolean, activeParts?: string[] | null }) {
+function DynamicFurniture({ parts, isExploded, activeParts, resetTrigger }: { parts: ModelPart[], isExploded: boolean, activeParts?: string[] | null, resetTrigger: number }) {
   if (!parts || parts.length === 0) return null;
 
   return (
     <group>
       {parts.map((part, i) => {
         const isActive = !activeParts || activeParts.length === 0 || activeParts.includes(part.name);
-        return <AnimatedPart key={i} part={part} isExploded={isExploded} isActive={isActive} />;
+        return <AnimatedPart key={i} part={part} isExploded={isExploded} isActive={isActive} resetTrigger={resetTrigger} />;
       })}
     </group>
   );
@@ -85,6 +85,7 @@ function DynamicFurniture({ parts, isExploded, activeParts }: { parts: ModelPart
 
 export function ThreeDViewer({ name, parts, activeParts }: ThreeDViewerProps) {
   const [isExploded, setIsExploded] = useState(false);
+  const [resetTrigger, setResetTrigger] = useState(0);
 
   return (
     <motion.div 
@@ -102,7 +103,7 @@ export function ThreeDViewer({ name, parts, activeParts }: ThreeDViewerProps) {
         <Suspense fallback={null}>
           <Stage environment="city" intensity={0.5}>
             {parts && parts.length > 0 ? (
-              <DynamicFurniture parts={parts} isExploded={isExploded} activeParts={activeParts} />
+              <DynamicFurniture parts={parts} isExploded={isExploded} activeParts={activeParts} resetTrigger={resetTrigger} />
             ) : (
               <mesh>
                 <boxGeometry args={[10, 10, 10]} />
@@ -126,6 +127,12 @@ export function ThreeDViewer({ name, parts, activeParts }: ThreeDViewerProps) {
       </Canvas>
 
       <div className="absolute bottom-6 right-6 flex gap-2">
+        <button 
+          onClick={() => setResetTrigger(prev => prev + 1)}
+          className="px-3 py-1 bg-white/80 backdrop-blur border border-gray-200 rounded text-[10px] uppercase tracking-wider font-semibold hover:bg-white transition-colors"
+        >
+          Reset
+        </button>
         <button 
           onClick={() => setIsExploded(false)}
           className={cn("px-3 py-1 bg-white/80 backdrop-blur border border-gray-200 rounded text-[10px] uppercase tracking-wider font-semibold hover:bg-white transition-colors", !isExploded ? "opacity-100" : "opacity-50")}

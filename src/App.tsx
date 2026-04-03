@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, getDocFromServer, doc } from "firebase/firestore";
 import { auth, db } from "./lib/firebase";
 import { ChatInterface } from "./components/ChatInterface";
 import { ThreeDViewer } from "./components/ThreeDViewer";
@@ -29,6 +29,17 @@ export default function App() {
   const [designStyle, setDesignStyle] = useState<string>("Mid-Century Modern");
 
   useEffect(() => {
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration. ");
+        }
+      }
+    }
+    testConnection();
+
     const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
       setUser(u);
     });
@@ -70,6 +81,7 @@ export default function App() {
   }, [user]);
 
   const handleSendMessage = async (content: string, imageData?: string, imageMimeType?: string) => {
+    setMobileView("chat");
     if (!user) {
       setMessages(prev => [...prev, 
         { role: "user", content },

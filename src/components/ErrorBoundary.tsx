@@ -26,6 +26,23 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
+      let errorMessage = "We encountered an unexpected error while processing your request. Please try refreshing the page or starting a new project.";
+      
+      try {
+        if (this.state.error?.message) {
+          const parsedError = JSON.parse(this.state.error.message);
+          if (parsedError.error && parsedError.operationType) {
+            if (parsedError.error.includes("Missing or insufficient permissions")) {
+              errorMessage = `You do not have permission to ${parsedError.operationType} this data. Please check your access rights or sign in with a different account.`;
+            } else {
+              errorMessage = `Database error during ${parsedError.operationType}: ${parsedError.error}`;
+            }
+          }
+        }
+      } catch {
+        // Not a JSON error string, use default message
+      }
+
       return (
         <div className="flex h-screen w-full items-center justify-center bg-gray-50 p-6">
           <div className="max-w-md bg-white p-8 rounded-2xl shadow-sm border border-red-100 text-center">
@@ -34,7 +51,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </div>
             <h2 className="text-2xl font-serif italic text-gray-900 mb-4">Something went wrong</h2>
             <p className="text-gray-500 text-sm mb-6">
-              We encountered an unexpected error while processing your request. Please try refreshing the page or starting a new project.
+              {errorMessage}
             </p>
             <button
               onClick={() => window.location.reload()}
