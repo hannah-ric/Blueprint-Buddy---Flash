@@ -1,5 +1,5 @@
-import { DxfWriter, point3d, point2d, Colors } from "@tarikjabiri/dxf";
-import type { BuildPlan, ModelPart, CutListItem } from "../types";
+import { DxfWriter, point3d, Colors } from "@tarikjabiri/dxf";
+import type { BuildPlan, ModelPart } from "../types";
 
 function parseDimValue(value: string): number {
   if (!value) return 0;
@@ -179,7 +179,8 @@ export function generatePartsDXF(plan: BuildPlan): string {
   const partGap = 3;
   const maxRowWidth = 96; // Standard 8' sheet width
 
-  for (const item of plan.cutList) {
+  const cutList = plan.cutList || [];
+  for (const item of cutList) {
     const w = item.widthNum ?? parseDimValue(item.width);
     const l = item.lengthNum ?? parseDimValue(item.length);
     if (w <= 0 || l <= 0) continue;

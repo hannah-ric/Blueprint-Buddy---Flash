@@ -1,11 +1,10 @@
 import { BuildPlan } from "../types";
-import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2, Image as ImageIcon, AlertTriangle, GitCompare, Calculator } from "lucide-react";
+import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2, Image as ImageIcon } from "lucide-react";
 import Markdown from "react-markdown";
 import { motion } from "motion/react";
-import React, { useState, useEffect, useMemo } from "react";
-import { auth } from "../lib/firebase";
+import { useState, useEffect } from "react";
 
-function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number }) {
+function StepImage({ prompt, stepIndex, planName, stepText }: { prompt: string, stepIndex: number, planName: string, stepText: string }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -19,14 +18,10 @@ function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number })
     setIsLoading(true);
     setError(false);
     try {
-      const token = await auth.currentUser?.getIdToken();
       const res = await fetch('/api/generate-image', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ prompt })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, planName, stepText })
       });
       if (!res.ok) throw new Error('Failed to generate');
       const data = await res.json();
@@ -42,11 +37,11 @@ function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number })
 
   if (imageUrl) {
     return (
-      <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 aspect-video relative flex items-center justify-center">
-        <img
-          src={imageUrl}
+      <div className="rounded-none overflow-hidden border border-[#141414] bg-[#E4E3E0] aspect-video relative flex items-center justify-center">
+        <img 
+          src={imageUrl} 
           alt={`Step ${stepIndex + 1} illustration`}
-          className="w-full h-full object-cover"
+          className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all"
           referrerPolicy="no-referrer"
         />
       </div>
@@ -54,17 +49,17 @@ function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number })
   }
 
   return (
-    <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 aspect-video relative flex flex-col items-center justify-center p-4 text-center group">
-      <ImageIcon size={32} className="text-gray-300 mb-2 group-hover:text-orange-400 transition-colors" />
+    <div className="rounded-none overflow-hidden border border-[#141414] bg-[#E4E3E0] aspect-video relative flex flex-col items-center justify-center p-4 text-center group">
+      <ImageIcon size={24} className="text-[#141414]/30 mb-2 group-hover:text-[#141414] transition-colors" strokeWidth={1.5} />
       {error ? (
-        <p className="text-[10px] text-red-500 mb-2">Failed to generate. Try again.</p>
+        <p className="text-[10px] text-red-600 mb-2 font-mono uppercase tracking-wider">Failed to generate</p>
       ) : (
-        <p className="text-[10px] text-gray-400 mb-2">Illustration available</p>
+        <p className="text-[10px] text-[#141414]/50 mb-2 font-mono uppercase tracking-wider">Illustration available</p>
       )}
-      <button
+      <button 
         onClick={handleGenerate}
         disabled={isLoading}
-        className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-[10px] uppercase tracking-wider font-semibold text-gray-600 hover:text-orange-600 hover:border-orange-200 transition-all disabled:opacity-50"
+        className="px-3 py-1.5 bg-[#E4E3E0] border border-[#141414] rounded-none text-[10px] uppercase tracking-wider font-semibold text-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all disabled:opacity-50"
       >
         {isLoading ? <Loader2 size={12} className="animate-spin inline mr-1" /> : null}
         {isLoading ? "Generating..." : "Generate Image"}
@@ -73,28 +68,15 @@ function StepImage({ prompt, stepIndex }: { prompt: string, stepIndex: number })
   );
 }
 
-function parseDimValue(value: string): number {
-  if (!value) return 0;
-  const trimmed = value.trim();
-  const fractionMatch = trimmed.match(/^(\d+)\s*\/\s*(\d+)$/);
-  if (fractionMatch) return Number(fractionMatch[1]) / Number(fractionMatch[2]);
-  const mixedMatch = trimmed.match(/^(\d+)\s+(\d+)\s*\/\s*(\d+)$/);
-  if (mixedMatch) return Number(mixedMatch[1]) + Number(mixedMatch[2]) / Number(mixedMatch[3]);
-  const num = parseFloat(trimmed);
-  return isNaN(num) ? 0 : num;
-}
-
 interface PlanDetailsProps {
   plan: BuildPlan;
   onSendMessage: (message: string) => void;
   isLoading: boolean;
   onStepHover?: (parts: string[] | null) => void;
-  onExportDXF?: (type: 'views' | 'parts') => void;
 }
 
-export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover, onExportDXF }: PlanDetailsProps) {
+export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: PlanDetailsProps) {
   const [input, setInput] = useState("");
-  const [showWarnings, setShowWarnings] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -104,30 +86,16 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover, onExp
     }
   };
 
-  const { totalCost, totalBoardFeet } = useMemo(() => {
-    const cost = plan.bom.reduce((sum, item) => sum + (item.estimatedCost || 0), 0);
-    let boardFeet = 0;
-    for (const item of plan.cutList) {
-      const t = item.thicknessNum ?? parseDimValue(item.thickness);
-      const w = item.widthNum ?? parseDimValue(item.width);
-      const l = item.lengthNum ?? parseDimValue(item.length);
-      if (t > 0 && w > 0 && l > 0) {
-        boardFeet += (t * w * l * item.quantity) / 144;
-      }
-    }
-    return { totalCost: cost, totalBoardFeet: boardFeet };
-  }, [plan.bom, plan.cutList]);
-
   const downloadCSV = (type: 'cutlist' | 'bom') => {
     let content: string;
     let filename: string;
-
+    
     if (type === 'cutlist') {
-      content = `Part,Quantity,Thickness (${plan.units}),Width (${plan.units}),Length (${plan.units}),Material\n` +
+      content = `Part,Quantity,Thickness (${plan.units}),Width (${plan.units}),Length (${plan.units}),Material\n` + 
         plan.cutList.map(item => `"${item.part}",${item.quantity},"${item.thickness}","${item.width}","${item.length}","${item.material}"`).join("\n");
       filename = `${plan.name.replace(/\s+/g, '_')}_cutlist.csv`;
     } else {
-      content = "Item,Quantity,Unit,Estimated Cost\n" +
+      content = "Item,Quantity,Unit,Estimated Cost\n" + 
         plan.bom.map(item => `"${item.item}",${item.quantity},"${item.unit}",${item.estimatedCost}`).join("\n");
       filename = `${plan.name.replace(/\s+/g, '_')}_bom.csv`;
     }
@@ -138,122 +106,112 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover, onExp
     a.href = url;
     a.download = filename;
     a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const downloadPlan = () => {
+    const md = `# ${plan.name}
+
+## Specifications
+- **Style:** ${plan.designStyle || "N/A"}
+- **Dimensions:** ${plan.dimensions}
+- **Material:** ${plan.material}
+- **Joinery:** ${plan.joinery}
+
+## Description
+${plan.description}
+
+## Cut List
+| Part | Quantity | Thickness | Width | Length | Material |
+|---|---|---|---|---|---|
+${plan.cutList.map(item => `| ${item.part} | ${item.quantity} | ${item.thickness} | ${item.width} | ${item.length} | ${item.material} |`).join('\n')}
+
+## Bill of Materials
+| Item | Quantity | Unit | Estimated Cost |
+|---|---|---|---|
+${plan.bom.map(item => `| ${item.item} | ${item.quantity} | ${item.unit} | $${item.estimatedCost.toFixed(2)} |`).join('\n')}
+
+## Assembly Instructions
+${plan.instructions.map((step, i) => {
+  const text = typeof step === 'string' ? step : step.text;
+  return `${i + 1}. ${text}`;
+}).join('\n')}
+`;
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${plan.name.replace(/\s+/g, '_')}_plan.md`;
+    a.click();
+    window.URL.revokeObjectURL(url);
   };
 
   return (
-    <motion.div
+    <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="flex-1 flex flex-col bg-white"
+      className="flex-1 flex flex-col bg-[#E4E3E0]"
     >
-      <div className="flex-1 overflow-y-auto p-8 space-y-12">
-        <section className="space-y-4">
-        <div className="flex items-center justify-between border-b border-gray-200 pb-4">
-          <h2 className="text-3xl font-light serif italic">Specifications</h2>
-          <div className="flex gap-4 flex-wrap justify-end">
-            <button onClick={() => downloadCSV('cutlist')} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-gray-500 hover:text-orange-600 transition-colors">
-              <Download size={14} /> Cut List CSV
+      <div className="flex-1 overflow-y-auto p-6 md:p-10 space-y-16">
+        <section className="space-y-6">
+        <div className="flex flex-col md:flex-row md:items-end justify-between border-b border-[#141414] pb-4 gap-4">
+          <h2 className="text-4xl font-light serif italic text-[#141414] tracking-tight">Specifications</h2>
+          <div className="flex flex-wrap gap-4">
+            <button onClick={downloadPlan} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-[#141414]/60 hover:text-[#141414] transition-colors">
+              <FileText size={14} strokeWidth={1.5} /> Export Plan
             </button>
-            <button onClick={() => downloadCSV('bom')} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-gray-500 hover:text-orange-600 transition-colors">
-              <Download size={14} /> BOM CSV
+            <button onClick={() => downloadCSV('cutlist')} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-[#141414]/60 hover:text-[#141414] transition-colors">
+              <Download size={14} strokeWidth={1.5} /> Export Cut List
             </button>
-            {onExportDXF && (
-              <>
-                <button onClick={() => onExportDXF('views')} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-gray-500 hover:text-blue-600 transition-colors">
-                  <Download size={14} /> DXF Views
-                </button>
-                <button onClick={() => onExportDXF('parts')} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-gray-500 hover:text-blue-600 transition-colors">
-                  <Download size={14} /> DXF Parts
-                </button>
-              </>
-            )}
+            <button onClick={() => downloadCSV('bom')} className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-[#141414]/60 hover:text-[#141414] transition-colors">
+              <Download size={14} strokeWidth={1.5} /> Export BOM
+            </button>
           </div>
         </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 md:gap-8">
-          <div>
-            <p className="text-[10px] uppercase text-gray-400 font-mono mb-1">Style</p>
-            <p className="font-mono text-sm">{plan.designStyle || "N/A"}</p>
+        
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
+          <div className="border-l border-[#141414] pl-4">
+            <p className="text-[10px] uppercase text-[#141414]/50 font-mono mb-1 tracking-widest">Style</p>
+            <p className="font-mono text-sm text-[#141414]">{plan.designStyle || "N/A"}</p>
           </div>
-          <div>
-            <p className="text-[10px] uppercase text-gray-400 font-mono mb-1">Dimensions</p>
-            <p className="font-mono text-sm">{plan.dimensions}</p>
+          <div className="border-l border-[#141414] pl-4">
+            <p className="text-[10px] uppercase text-[#141414]/50 font-mono mb-1 tracking-widest">Dimensions</p>
+            <p className="font-mono text-sm text-[#141414]">{plan.dimensions}</p>
           </div>
-          <div>
-            <p className="text-[10px] uppercase text-gray-400 font-mono mb-1">Material</p>
-            <p className="font-mono text-sm">{plan.material}</p>
+          <div className="border-l border-[#141414] pl-4">
+            <p className="text-[10px] uppercase text-[#141414]/50 font-mono mb-1 tracking-widest">Material</p>
+            <p className="font-mono text-sm text-[#141414]">{plan.material}</p>
           </div>
-          <div>
-            <p className="text-[10px] uppercase text-gray-400 font-mono mb-1">Joinery</p>
-            <p className="font-mono text-sm">{plan.joinery}</p>
+          <div className="border-l border-[#141414] pl-4">
+            <p className="text-[10px] uppercase text-[#141414]/50 font-mono mb-1 tracking-widest">Joinery</p>
+            <p className="font-mono text-sm text-[#141414]">{plan.joinery}</p>
           </div>
-          <div>
-            <p className="text-[10px] uppercase text-gray-400 font-mono mb-1">Created</p>
-            <p className="font-mono text-sm">{new Date(plan.createdAt).toLocaleDateString()}</p>
+          <div className="border-l border-[#141414] pl-4">
+            <p className="text-[10px] uppercase text-[#141414]/50 font-mono mb-1 tracking-widest">Created</p>
+            <p className="font-mono text-sm text-[#141414]">{new Date(plan.createdAt).toLocaleDateString()}</p>
           </div>
         </div>
       </section>
 
-      {/* Validation Warnings */}
-      {plan.warnings && plan.warnings.length > 0 && (
-        <section className="space-y-2">
-          <button
-            onClick={() => setShowWarnings(!showWarnings)}
-            className="flex items-center gap-3 w-full p-4 bg-yellow-50 border border-yellow-200 rounded-xl hover:bg-yellow-100 transition-colors"
-          >
-            <AlertTriangle className="text-yellow-600 shrink-0" size={18} />
-            <span className="text-sm font-medium text-yellow-800 flex-1 text-left">
-              {plan.warnings.length} validation {plan.warnings.length === 1 ? 'notice' : 'notices'}
-            </span>
-            <span className="text-[10px] uppercase tracking-wider text-yellow-600 font-semibold">
-              {showWarnings ? "Hide" : "Show"}
-            </span>
-          </button>
-          {showWarnings && (
-            <div className="p-4 bg-yellow-50/50 border border-yellow-100 rounded-xl space-y-2">
-              {plan.warnings.map((warning, i) => (
-                <p key={i} className="text-xs text-yellow-800 flex gap-2">
-                  <span className="text-yellow-500 shrink-0">&#x2022;</span>
-                  {warning}
-                </p>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* Changes Summary */}
-      {plan.changesSummary && (
-        <section className="space-y-4 bg-green-50/50 p-6 rounded-2xl border border-green-100">
-          <div className="flex items-center gap-3">
-            <GitCompare className="text-green-600" size={20} />
-            <h3 className="text-xl font-medium text-green-900">Changes Made</h3>
-          </div>
-          <div className="text-sm text-green-800 leading-relaxed whitespace-pre-wrap">
-            <Markdown>{plan.changesSummary}</Markdown>
-          </div>
-        </section>
-      )}
-
       {plan.actionPlan && (
-        <section className="space-y-4 bg-blue-50/50 p-6 rounded-2xl border border-blue-100">
-          <div className="flex items-center gap-3">
-            <Lightbulb className="text-blue-600" size={20} />
-            <h3 className="text-xl font-medium text-blue-900">Research & Action Plan</h3>
+        <section className="space-y-4 bg-[#141414] text-[#E4E3E0] p-8 rounded-none border border-[#141414]">
+          <div className="flex items-center gap-3 border-b border-[#E4E3E0]/20 pb-4">
+            <Lightbulb className="text-[#E4E3E0]" size={20} strokeWidth={1.5} />
+            <h3 className="text-xl font-medium serif italic tracking-wide">Research & Action Plan</h3>
           </div>
-          <div className="text-sm text-blue-800 leading-relaxed whitespace-pre-wrap markdown-body prose prose-sm prose-blue max-w-none">
+          <div className="text-sm text-[#E4E3E0]/80 leading-relaxed whitespace-pre-wrap markdown-body prose prose-sm prose-invert max-w-none pt-2">
             <Markdown>{plan.actionPlan}</Markdown>
           </div>
         </section>
       )}
 
       {plan.designNotes && (
-        <section className="space-y-4 bg-orange-50/50 p-6 rounded-2xl border border-orange-100">
-          <div className="flex items-center gap-3">
-            <Lightbulb className="text-orange-600" size={20} />
-            <h3 className="text-xl font-medium text-orange-900">Why This Design Works</h3>
+        <section className="space-y-4 bg-[#E4E3E0] p-8 rounded-none border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+          <div className="flex items-center gap-3 border-b border-[#141414]/20 pb-4">
+            <Lightbulb className="text-[#141414]" size={20} strokeWidth={1.5} />
+            <h3 className="text-xl font-medium serif italic tracking-wide text-[#141414]">Why This Design Works</h3>
           </div>
-          <div className="text-sm text-orange-800 leading-relaxed whitespace-pre-wrap markdown-body prose prose-sm prose-orange max-w-none">
+          <div className="text-sm text-[#141414]/80 leading-relaxed whitespace-pre-wrap markdown-body prose prose-sm max-w-none pt-2">
             <Markdown>{plan.designNotes}</Markdown>
           </div>
         </section>
@@ -261,36 +219,34 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover, onExp
 
       <section className="space-y-6">
         <div className="flex items-center gap-3">
-          <FileText className="text-orange-600" size={20} />
-          <h3 className="text-xl font-medium">Cut List ({plan.units})</h3>
-          {totalBoardFeet > 0 && (
-            <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-500 font-mono bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
-              <Calculator size={12} />
-              {totalBoardFeet.toFixed(1)} board feet
-            </span>
-          )}
+          <FileText className="text-[#141414]" size={20} strokeWidth={1.5} />
+          <h3 className="text-2xl font-light serif italic text-[#141414]">Cut List ({plan.units})</h3>
         </div>
-        <div className="border border-gray-200 rounded-lg overflow-hidden">
+        <div className="border border-[#141414] rounded-none overflow-hidden bg-[#E4E3E0]">
           <table className="w-full text-left text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="border-b border-[#141414]">
               <tr>
-                <th className="px-4 py-3 font-mono text-[10px] uppercase text-gray-500">Part</th>
-                <th className="px-4 py-3 font-mono text-[10px] uppercase text-gray-500">Qty</th>
-                <th className="px-4 py-3 font-mono text-[10px] uppercase text-gray-500">T ({plan.units})</th>
-                <th className="px-4 py-3 font-mono text-[10px] uppercase text-gray-500">W ({plan.units})</th>
-                <th className="px-4 py-3 font-mono text-[10px] uppercase text-gray-500">L ({plan.units})</th>
-                <th className="px-4 py-3 font-mono text-[10px] uppercase text-gray-500">Material</th>
+                <th className="px-4 py-3 font-mono text-[10px] uppercase text-[#141414]/60 tracking-widest">Part</th>
+                <th className="px-4 py-3 font-mono text-[10px] uppercase text-[#141414]/60 tracking-widest">Qty</th>
+                <th className="px-4 py-3 font-mono text-[10px] uppercase text-[#141414]/60 tracking-widest">T ({plan.units})</th>
+                <th className="px-4 py-3 font-mono text-[10px] uppercase text-[#141414]/60 tracking-widest">W ({plan.units})</th>
+                <th className="px-4 py-3 font-mono text-[10px] uppercase text-[#141414]/60 tracking-widest">L ({plan.units})</th>
+                <th className="px-4 py-3 font-mono text-[10px] uppercase text-[#141414]/60 tracking-widest">Material</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-[#141414]/20" onMouseLeave={() => onStepHover?.(null)}>
               {plan.cutList.map((item, i) => (
-                <tr key={i} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3 font-medium">{item.part}</td>
-                  <td className="px-4 py-3">{item.quantity}</td>
-                  <td className="px-4 py-3">{item.thickness}</td>
-                  <td className="px-4 py-3">{item.width}</td>
-                  <td className="px-4 py-3">{item.length}</td>
-                  <td className="px-4 py-3 text-gray-500">{item.material}</td>
+                <tr 
+                  key={i} 
+                  className="hover:bg-[#141414]/5 transition-colors cursor-default"
+                  onMouseEnter={() => onStepHover?.([item.part])}
+                >
+                  <td className="px-4 py-3 font-medium text-[#141414]">{item.part}</td>
+                  <td className="px-4 py-3 font-mono text-[#141414]">{item.quantity}</td>
+                  <td className="px-4 py-3 font-mono text-[#141414]">{item.thickness}</td>
+                  <td className="px-4 py-3 font-mono text-[#141414]">{item.width}</td>
+                  <td className="px-4 py-3 font-mono text-[#141414]">{item.length}</td>
+                  <td className="px-4 py-3 text-[#141414]/60">{item.material}</td>
                 </tr>
               ))}
             </tbody>
@@ -299,58 +255,51 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover, onExp
       </section>
 
       <section className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Package className="text-orange-600" size={20} />
-            <h3 className="text-xl font-medium">Bill of Materials</h3>
-          </div>
-          <div className="text-right">
-            <p className="text-[10px] uppercase text-gray-400 font-mono mb-0.5">Estimated Total</p>
-            <p className="font-mono text-lg font-semibold text-gray-800">${totalCost.toFixed(2)}</p>
-            <p className="text-[9px] text-gray-400 italic">Prices are estimates only</p>
-          </div>
+        <div className="flex items-center gap-3">
+          <Package className="text-[#141414]" size={20} strokeWidth={1.5} />
+          <h3 className="text-2xl font-light serif italic text-[#141414]">Bill of Materials</h3>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {plan.bom.map((item, i) => (
-            <div key={i} className="flex items-center justify-between p-4 border border-gray-100 rounded-xl hover:border-orange-200 transition-all">
+            <div key={i} className="flex items-center justify-between p-4 border border-[#141414] rounded-none hover:bg-[#141414] hover:text-[#E4E3E0] transition-all group">
               <div>
                 <p className="font-medium">{item.item}</p>
-                <p className="text-xs text-gray-500">{item.quantity} {item.unit}</p>
+                <p className="text-xs text-[#141414]/60 group-hover:text-[#E4E3E0]/60 font-mono mt-1">{item.quantity} {item.unit}</p>
               </div>
-              <p className="font-mono text-sm text-gray-600">${item.estimatedCost.toFixed(2)}</p>
+              <p className="font-mono text-sm">${item.estimatedCost.toFixed(2)}</p>
             </div>
           ))}
         </div>
       </section>
 
-      <section className="space-y-6">
+      <section className="space-y-8">
         <div className="flex items-center gap-3">
-          <Wrench className="text-orange-600" size={20} />
-          <h3 className="text-xl font-medium">Assembly Instructions</h3>
+          <Wrench className="text-[#141414]" size={20} strokeWidth={1.5} />
+          <h3 className="text-2xl font-light serif italic text-[#141414]">Assembly Instructions</h3>
         </div>
-        <div className="space-y-8" onMouseLeave={() => onStepHover?.(null)}>
+        <div className="space-y-12" onMouseLeave={() => onStepHover?.(null)}>
           {plan.instructions.map((step, i) => {
             const isString = typeof step === 'string';
             const text = isString ? step : step.text;
             const activeParts = isString ? null : step.activeParts;
             const imagePrompt = isString ? null : step.imagePrompt;
-
+            
             return (
-              <div
-                key={i}
-                className="flex flex-col md:flex-row gap-6 group cursor-default"
+              <div 
+                key={i} 
+                className="flex flex-col md:flex-row gap-8 group cursor-default border-t border-[#141414]/20 pt-8 first:border-0 first:pt-0"
                 onMouseEnter={() => onStepHover?.(activeParts || null)}
               >
                 <div className="flex gap-6 flex-1">
-                  <div className="shrink-0 w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-xs font-mono text-gray-400 group-hover:border-orange-500 group-hover:text-orange-600 transition-all">
+                  <div className="shrink-0 w-12 h-12 border border-[#141414] flex items-center justify-center text-lg font-serif italic text-[#141414] group-hover:bg-[#141414] group-hover:text-[#E4E3E0] transition-all">
                     {String(i + 1).padStart(2, '0')}
                   </div>
                   <div className="space-y-4 flex-1">
-                    <p className="text-gray-700 leading-relaxed pt-1 group-hover:text-gray-900 transition-colors">{text}</p>
+                    <p className="text-[#141414]/80 leading-relaxed pt-1 group-hover:text-[#141414] transition-colors text-base">{text}</p>
                     {activeParts && activeParts.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2 pt-2">
                         {activeParts.map((part, idx) => (
-                          <span key={idx} className="px-2 py-1 bg-orange-50 text-orange-700 text-[10px] uppercase tracking-wider rounded border border-orange-100 font-mono">
+                          <span key={idx} className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest border border-[#141414] font-mono">
                             {part}
                           </span>
                         ))}
@@ -360,7 +309,7 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover, onExp
                 </div>
                 {imagePrompt && (
                   <div className="md:w-1/3 shrink-0">
-                    <StepImage prompt={imagePrompt} stepIndex={i} />
+                    <StepImage prompt={imagePrompt} stepIndex={i} planName={plan.name} stepText={text} />
                   </div>
                 )}
               </div>
@@ -369,22 +318,22 @@ export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover, onExp
         </div>
       </section>
       </div>
-      <div className="p-4 border-t border-gray-200 bg-gray-50 shrink-0">
-        <form onSubmit={handleSubmit} className="relative">
+      <div className="p-4 border-t border-[#141414] bg-[#E4E3E0] shrink-0">
+        <form onSubmit={handleSubmit} className="relative max-w-4xl mx-auto">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Request changes to this design..."
-            className="w-full pl-4 pr-12 py-3 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all text-sm"
+            className="w-full pl-4 pr-12 py-3 bg-[#E4E3E0] border border-[#141414] rounded-none focus:outline-none focus:ring-1 focus:ring-[#141414] transition-all text-sm font-sans placeholder:text-[#141414]/40"
             disabled={isLoading}
           />
           <button
             type="submit"
             disabled={!input.trim() || isLoading}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:hover:bg-orange-600 transition-colors"
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-[#141414] text-[#E4E3E0] rounded-none hover:bg-[#141414]/80 disabled:opacity-50 transition-colors"
           >
-            {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+            {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} strokeWidth={1.5} />}
           </button>
         </form>
       </div>

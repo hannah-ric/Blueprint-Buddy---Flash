@@ -6,3 +6,11 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Core Configurations & External API files (Gemini / Firebase)
+firebase-applet-config.json
+firestore.rules
+firebase.json
+.firebaserc
+seed-db.ts
+firebase-blueprint.json

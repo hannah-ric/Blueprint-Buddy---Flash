@@ -4,7 +4,6 @@ import type { BuildPlan } from '../src/types';
 
 function makePlan(overrides?: Partial<BuildPlan>): BuildPlan {
   return {
-    userId: "test-user",
     name: "Test Table",
     description: "A simple test table",
     dimensions: "48x30x24 in",

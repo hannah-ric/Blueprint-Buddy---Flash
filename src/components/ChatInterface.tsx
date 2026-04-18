@@ -69,15 +69,25 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
 
       if (selectedImage) {
         const reader = new FileReader();
-        const base64Promise = new Promise<string>((resolve) => {
+        const base64Promise = new Promise<string>((resolve, reject) => {
           reader.onloadend = () => {
-            const base64String = (reader.result as string).split(',')[1];
-            resolve(base64String);
+            if (reader.result) {
+              const base64String = (reader.result as string).split(',')[1];
+              resolve(base64String);
+            } else {
+              reject(new Error("Failed to read image"));
+            }
           };
+          reader.onerror = reject;
         });
         reader.readAsDataURL(selectedImage);
-        imageData = await base64Promise;
-        imageMimeType = selectedImage.type;
+        try {
+          imageData = await base64Promise;
+          imageMimeType = selectedImage.type;
+        } catch (error) {
+          console.error("Error reading image:", error);
+          return; // Stop submission if image read fails
+        }
       }
 
       onSendMessage(input, imageData, imageMimeType);
@@ -87,18 +97,18 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
   };
 
   return (
-    <div className={cn("flex flex-col h-full bg-white border-r border-gray-200 w-full md:max-w-md shrink-0", className)}>
-      <div className="p-4 border-bottom border-gray-100 bg-gray-50">
-        <h2 className="text-lg font-semibold text-gray-800 italic serif">Blueprint Buddy</h2>
-        <p className="text-xs text-gray-500 font-mono uppercase tracking-wider">AI Design Assistant</p>
+    <div className={cn("flex flex-col h-full bg-[#E4E3E0] w-full md:max-w-md shrink-0", className)}>
+      <div className="p-4 border-b border-[#141414] bg-[#E4E3E0]">
+        <h2 className="text-xl font-semibold text-[#141414] italic serif">Blueprint Buddy</h2>
+        <p className="text-[10px] text-[#141414]/60 font-mono uppercase tracking-[0.1em] mt-1">AI Design Assistant</p>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-6">
         {messages.length === 0 && (
-          <div className="text-center py-10">
-            <Bot className="w-12 h-12 mx-auto text-gray-300 mb-4" />
-            <p className="text-gray-500 text-sm">Describe the furniture you want to build.</p>
-            <p className="text-xs text-gray-400 mt-2 italic">"Walnut coffee table with tapered legs..."</p>
+          <div className="text-center py-12">
+            <Bot className="w-12 h-12 mx-auto text-[#141414]/30 mb-4" strokeWidth={1.5} />
+            <p className="text-[#141414]/60 text-sm font-mono uppercase tracking-wider">Describe your project</p>
+            <p className="text-xs text-[#141414]/40 mt-2 italic serif">"Walnut coffee table with tapered legs..."</p>
           </div>
         )}
         {messages.map((msg, i) => (
@@ -108,26 +118,26 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
             key={i} 
             className={cn("flex gap-3", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
           >
-            <div className={cn("w-8 h-8 rounded-full flex items-center justify-center shrink-0", 
-              msg.role === "user" ? "bg-orange-100 text-orange-600" : "bg-gray-100 text-gray-600")}>
-              {msg.role === "user" ? <User size={16} /> : <Bot size={16} />}
+            <div className={cn("w-8 h-8 rounded-none flex items-center justify-center shrink-0 border border-[#141414]", 
+              msg.role === "user" ? "bg-[#141414] text-[#E4E3E0]" : "bg-[#E4E3E0] text-[#141414]")}>
+              {msg.role === "user" ? <User size={14} strokeWidth={2} /> : <Bot size={14} strokeWidth={2} />}
             </div>
-            <div className={cn("max-w-[80%] p-3 rounded-2xl text-sm", 
-              msg.role === "user" ? "bg-orange-600 text-white rounded-tr-none" : "bg-gray-100 text-gray-800 rounded-tl-none")}>
+            <div className={cn("max-w-[80%] p-3 text-sm border border-[#141414]", 
+              msg.role === "user" ? "bg-[#141414] text-[#E4E3E0]" : "bg-[#E4E3E0] text-[#141414]")}>
               {msg.imageData && (
-                <div className="mb-2 rounded-lg overflow-hidden border border-white/20">
-                  <img src={`data:${msg.imageMimeType};base64,${msg.imageData}`} alt="Uploaded reference" className="w-full h-auto max-h-48 object-cover" />
+                <div className="mb-3 border border-[#141414]/20 p-1 bg-white/5">
+                  <img src={`data:${msg.imageMimeType};base64,${msg.imageData}`} alt="Uploaded reference" className="w-full h-auto max-h-48 object-cover grayscale hover:grayscale-0 transition-all" />
                 </div>
               )}
-              <div className="markdown-body prose prose-sm prose-p:leading-relaxed max-w-none">
+              <div className={cn("markdown-body prose prose-sm max-w-none", msg.role === "user" ? "prose-invert" : "")}>
                 <Markdown>{msg.content}</Markdown>
               </div>
               {msg.hasPlan && onViewPlan && (
                 <button 
                   onClick={onViewPlan} 
-                  className="mt-3 w-full bg-white text-orange-600 px-3 py-2 rounded-xl font-medium shadow-sm border border-orange-100 flex items-center justify-center gap-2 hover:bg-orange-50 transition-colors md:hidden"
+                  className="mt-4 w-full bg-[#E4E3E0] text-[#141414] px-3 py-2 font-mono text-xs uppercase tracking-wider border border-[#141414] flex items-center justify-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors md:hidden"
                 >
-                  <Layout size={16} />
+                  <Layout size={14} />
                   View Plan & 3D Model
                 </button>
               )}
@@ -140,42 +150,42 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
             animate={{ opacity: 1, y: 0 }}
             className="flex gap-3"
           >
-            <div className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center">
-              <Bot size={16} />
+            <div className="w-8 h-8 border border-[#141414] bg-[#E4E3E0] text-[#141414] flex items-center justify-center">
+              <Bot size={14} strokeWidth={2} />
             </div>
-            <div className="bg-gray-100 p-3 rounded-2xl rounded-tl-none">
-              <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+            <div className="bg-[#E4E3E0] border border-[#141414] p-3 flex items-center justify-center">
+              <Loader2 className="w-4 h-4 animate-spin text-[#141414]" />
             </div>
           </motion.div>
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-100 bg-white flex flex-col gap-3">
-        <div className="flex flex-col gap-3 px-1 pb-1">
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
-            <span className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 shrink-0 w-16">Style:</span>
+      <form onSubmit={handleSubmit} className="p-4 border-t border-[#141414] bg-[#E4E3E0] flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1">
+            <span className="text-[10px] uppercase tracking-widest font-mono text-[#141414]/60 shrink-0 w-12">Style</span>
             <select
               value={designStyle}
               onChange={(e) => setDesignStyle(e.target.value)}
-              className="text-xs px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-orange-500 w-full max-w-[200px]"
+              className="text-xs px-2 py-1.5 border border-[#141414] bg-[#E4E3E0] text-[#141414] focus:outline-none focus:ring-1 focus:ring-[#141414] w-full max-w-[200px] font-mono rounded-none"
             >
               {STYLES.map(style => (
                 <option key={style} value={style}>{style}</option>
               ))}
             </select>
           </div>
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
-            <span className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 shrink-0 w-16">Skill:</span>
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1">
+            <span className="text-[10px] uppercase tracking-widest font-mono text-[#141414]/60 shrink-0 w-12">Skill</span>
             {["Beginner", "Intermediate", "Advanced"].map(level => (
               <button
                 key={level}
                 type="button"
                 onClick={() => setExperienceLevel(level)}
                 className={cn(
-                  "text-xs px-3 py-1.5 rounded-full transition-colors border shrink-0",
+                  "text-[10px] px-3 py-1.5 uppercase tracking-wider transition-colors border shrink-0 font-mono rounded-none",
                   experienceLevel === level 
-                    ? "bg-orange-50 border-orange-200 text-orange-700 font-medium" 
-                    : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50"
+                    ? "bg-[#141414] border-[#141414] text-[#E4E3E0]" 
+                    : "bg-[#E4E3E0] border-[#141414] text-[#141414] hover:bg-[#141414]/10"
                 )}
               >
                 {level}
@@ -185,14 +195,14 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
         </div>
         
         {imagePreview && (
-          <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-gray-200">
-            <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+          <div className="relative w-16 h-16 border border-[#141414] p-1 bg-white/5">
+            <img src={imagePreview} alt="Preview" className="w-full h-full object-cover grayscale" />
             <button
               type="button"
               onClick={removeImage}
-              className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
+              className="absolute -top-2 -right-2 p-1 bg-[#141414] text-[#E4E3E0] border border-[#141414] hover:bg-red-600 hover:text-white transition-colors"
             >
-              <X size={12} />
+              <X size={10} />
             </button>
           </div>
         )}
@@ -208,10 +218,10 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="p-3 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-xl transition-colors"
+            className="p-3 border border-[#141414] text-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors rounded-none"
             title="Upload reference image"
           >
-            <ImagePlus size={20} />
+            <ImagePlus size={18} strokeWidth={1.5} />
           </button>
           <div className="relative flex-1">
             <input
@@ -219,14 +229,14 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Describe your project..."
-              className="w-full pl-4 pr-12 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all text-sm"
+              className="w-full pl-3 pr-10 py-3 bg-[#E4E3E0] border border-[#141414] focus:outline-none focus:ring-1 focus:ring-[#141414] transition-all text-sm font-sans rounded-none placeholder:text-[#141414]/40"
             />
             <button
               type="submit"
               disabled={isLoading || (!input.trim() && !selectedImage)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-orange-600 hover:bg-orange-50 rounded-lg disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#141414] transition-colors rounded-none"
             >
-              <Send size={18} />
+              <Send size={16} strokeWidth={1.5} />
             </button>
           </div>
         </div>

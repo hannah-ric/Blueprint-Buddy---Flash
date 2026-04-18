@@ -88,9 +88,14 @@ function dimensionMatchesAnyPermutation(cutDims: number[], modelDims: number[], 
   });
 }
 
-export function validatePlan(plan: Record<string, unknown>): ValidationResult {
+export function validatePlan(plan: Record<string, unknown> | undefined | null): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
+
+  if (!plan) {
+    errors.push("Plan data is missing from the response.");
+    return { errors, warnings };
+  }
 
   const cutList = plan.cutList as CutListEntry[] | undefined;
   const modelParts = plan.modelParts as ModelPartEntry[] | undefined;

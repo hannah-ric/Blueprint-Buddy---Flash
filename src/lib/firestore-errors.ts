@@ -1,4 +1,4 @@
-import { auth } from "./firebase";
+import { auth } from './firebase';
 
 export enum OperationType {
   CREATE = 'create',
@@ -48,5 +48,5 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error("A database error occurred. Please try again.");
+  throw new Error(JSON.stringify(errInfo));
 }

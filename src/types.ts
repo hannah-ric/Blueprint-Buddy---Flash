@@ -37,7 +37,6 @@ export interface InstructionStep {
 
 export interface BuildPlan {
   id?: string;
-  userId: string;
   name: string;
   description: string;
   actionPlan?: string;

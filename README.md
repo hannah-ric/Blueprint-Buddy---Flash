@@ -10,7 +10,6 @@ Blueprint Buddy is an AI-driven furniture design and build-plan generator. It us
   - **Cut Lists**: Precise dimensions exportable as CSV.
   - **Bill of Materials (BOM)**: Hardware and material lists with estimated costs.
   - **Assembly Instructions**: Step-by-step guides.
-- **Project History**: Securely save and manage your previous designs using Firebase Firestore.
 - **Customizable Units**: Choose between inches, cm, or mm.
 - **Experience Levels**: Tailor the complexity of the joinery and instructions to your skill level (Beginner, Intermediate, Advanced).
 
@@ -19,13 +18,12 @@ Blueprint Buddy is an AI-driven furniture design and build-plan generator. It us
 - **Frontend**: React 19, Tailwind CSS 4, Lucide Icons, Framer Motion
 - **3D Rendering**: React Three Fiber, Drei
 - **Backend**: Express.js with Vite middleware
-- **Database & Auth**: Firebase (Firestore, Google Auth)
 - **AI**: Google Gemini API (`@google/genai`)
 
 ## Getting Started
 
 1. Clone the repository.
 2. Install dependencies: `npm install`
-3. Set up your `.env` file with your `GEMINI_API_KEY` and Firebase configuration.
+3. Set up your `.env` file with your `GEMINI_API_KEY`.
 4. Run the development server: `npm run dev`
 5. Build for production: `npm run build`

@@ -4,7 +4,6 @@ import { PlanDetails } from '../src/components/PlanDetails';
 
 const mockPlan = {
   id: "test-id",
-  userId: "test-user",
   name: "Test Plan",
   title: "Test Plan",
   description: "A test plan",
@@ -52,7 +51,7 @@ describe('PlanDetails', () => {
     
     expect(screen.getAllByText('Screws').length).toBeGreaterThan(0);
     expect(screen.getAllByText('10').length).toBeGreaterThan(0);
-    expect(screen.getByText('$5.00')).toBeDefined();
+    expect(screen.getAllByText('$5.00').length).toBeGreaterThan(0);
   });
 
   it('renders instructions correctly', () => {

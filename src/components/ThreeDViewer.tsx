@@ -243,7 +243,9 @@ function DynamicFurniture({ parts, isExploded, activeParts, resetTrigger, showLa
   return (
     <group>
       {parts.map((part, i) => {
-        const isActive = !activeParts || activeParts.length === 0 || activeParts.includes(part.name);
+        const isActive = !activeParts || activeParts.length === 0 || activeParts.some(ap => 
+          part.name.toLowerCase().includes(ap.toLowerCase()) || ap.toLowerCase().includes(part.name.toLowerCase())
+        );
         const materialColor = getMaterialColor(part.material || primaryMaterial);
         return (
           <AnimatedPart

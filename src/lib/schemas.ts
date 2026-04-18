@@ -23,7 +23,6 @@ export const generateRequestSchema = z.object({
     .array(chatMessageSchema)
     .min(1, "At least one message is required")
     .max(50, "Too many messages in conversation"),
-  userId: z.string().min(1, "userId is required").max(128),
   experienceLevel: z.enum(["Beginner", "Intermediate", "Advanced"], {
     error: "experienceLevel must be Beginner, Intermediate, or Advanced",
   }),

@@ -1,7 +1,10 @@
 import { BuildPlan } from "../types";
 import { User } from "firebase/auth";
-import { Loader2 } from "lucide-react";
-import { motion } from "motion/react";
+import { deleteDoc, doc } from "firebase/firestore";
+import { db } from "../lib/firebase";
+import { Trash2, Hammer, Calendar } from "lucide-react";
+import { useState } from "react";
+import { handleFirestoreError, OperationType } from "../lib/firestore-errors";
 
 interface ProjectHistoryProps {
   user: User | null;
@@ -11,48 +14,117 @@ interface ProjectHistoryProps {
 }
 
 export function ProjectHistory({ user, history, isLoading, onSelectPlan }: ProjectHistoryProps) {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+
+  if (error) {
+    throw error;
+  }
+
+  if (!user) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6 bg-[#E4E3E0]">
+        <div className="text-center max-w-md border border-[#141414] p-8 shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] bg-white">
+          <div className="w-16 h-16 bg-[#E4E3E0] border border-[#141414] rounded-none flex items-center justify-center mx-auto shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] mb-6">
+            <Hammer className="text-[#141414]" size={24} strokeWidth={1.5} />
+          </div>
+          <h3 className="text-2xl font-light serif italic text-[#141414] mb-4">Sign in to save projects</h3>
+          <p className="text-[#141414]/60 text-xs font-mono uppercase tracking-wider leading-relaxed">
+            Create an account to save your generated build plans and access them from anywhere.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6 bg-[#E4E3E0]">
+        <div className="animate-pulse flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-2 border-[#141414] border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-xs font-mono uppercase tracking-widest text-[#141414]/60">Loading history...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (history.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6 bg-[#E4E3E0]">
+        <div className="text-center max-w-md border border-[#141414] p-8 shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] bg-white">
+          <div className="w-16 h-16 bg-[#E4E3E0] border border-[#141414] rounded-none flex items-center justify-center mx-auto shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] mb-6">
+            <Hammer className="text-[#141414]" size={24} strokeWidth={1.5} />
+          </div>
+          <h3 className="text-2xl font-light serif italic text-[#141414] mb-4">No Projects Yet</h3>
+          <p className="text-[#141414]/60 text-xs font-mono uppercase tracking-wider leading-relaxed">
+            Your generated build plans will appear here. Start a new design to see it in your history.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const handleDelete = async (e: React.MouseEvent, planId: string) => {
+    e.stopPropagation();
+    if (deletingId === planId) {
+      try {
+        await deleteDoc(doc(db, "plans", planId));
+        setDeletingId(null);
+      } catch (err) {
+        try {
+          handleFirestoreError(err, OperationType.DELETE, `plans/${planId}`);
+        } catch (e) {
+          setError(e as Error);
+        }
+      }
+    } else {
+      setDeletingId(planId);
+      // Auto-cancel after 3 seconds
+      setTimeout(() => setDeletingId(null), 3000);
+    }
+  };
+
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto p-8">
-        {!user ? (
-          <div className="text-center py-20">
-            <p className="text-gray-500">Sign in to view your project history.</p>
-          </div>
-        ) : isLoading ? (
-          <div className="flex justify-center items-center py-20">
-            <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
-          </div>
-        ) : history.length === 0 ? (
-          <div className="text-center py-20">
-            <p className="text-gray-500">No projects found. Start a new design to see it here.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {history.map((plan, index) => (
-              <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }}
-                key={plan.id} 
-                onClick={() => onSelectPlan(plan)}
-                className="bg-white border border-gray-200 rounded-2xl p-6 hover:border-orange-500 transition-all cursor-pointer group shadow-sm hover:shadow-md"
+    <div className="flex-1 overflow-y-auto p-6 bg-[#E4E3E0]">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {history.map((plan) => (
+          <div 
+            key={plan.id}
+            onClick={() => onSelectPlan(plan)}
+            className="group relative bg-white border border-[#141414] p-5 cursor-pointer hover:shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] transition-all flex flex-col h-[280px]"
+          >
+            <div className="flex justify-between items-start mb-4">
+              <h4 className="font-serif italic text-xl text-[#141414] line-clamp-2 pr-8">{plan.name}</h4>
+              <button
+                onClick={(e) => handleDelete(e, plan.id!)}
+                className={`absolute top-4 right-4 p-2 border border-[#141414] transition-colors ${
+                  deletingId === plan.id 
+                    ? 'bg-red-500 text-white border-red-500' 
+                    : 'bg-[#E4E3E0] text-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] opacity-0 group-hover:opacity-100'
+                }`}
+                title={deletingId === plan.id ? "Click again to confirm" : "Delete project"}
               >
-                <div className="flex justify-between items-start mb-4">
-                  <h3 className="text-xl font-medium group-hover:text-orange-600 transition-colors">{plan.name}</h3>
-                  <p className="text-[10px] font-mono text-gray-400">{new Date(plan.createdAt).toLocaleDateString()}</p>
-                </div>
-                <p className="text-sm text-gray-500 line-clamp-2 mb-6">{plan.description}</p>
-                <div className="flex items-center justify-between pt-4 border-t border-gray-50">
-                  <span className="text-[10px] uppercase tracking-widest font-bold text-gray-400">{plan.material}</span>
-                  <div className="flex gap-2">
-                    <span className="px-2 py-1 bg-gray-50 rounded text-[9px] font-mono text-gray-500">{plan.cutList.length} Parts</span>
-                    <span className="px-2 py-1 bg-gray-50 rounded text-[9px] font-mono text-gray-500">{plan.instructions.length} Steps</span>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
+                <Trash2 size={16} strokeWidth={1.5} />
+              </button>
+            </div>
+            
+            <p className="text-sm text-[#141414]/70 line-clamp-3 mb-auto font-sans">
+              {plan.description}
+            </p>
+            
+            <div className="mt-4 pt-4 border-t border-[#141414]/20 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-[#141414]/60">
+                <Calendar size={14} strokeWidth={1.5} />
+                <span className="text-[10px] font-mono uppercase tracking-wider">
+                  {plan.createdAt ? new Date(plan.createdAt).toLocaleDateString() : 'Unknown date'}
+                </span>
+              </div>
+              <div className="text-[10px] font-mono uppercase tracking-wider bg-[#141414] text-[#E4E3E0] px-2 py-1">
+                {plan.modelParts?.length || 0} Parts
+              </div>
+            </div>
           </div>
-        )}
+        ))}
       </div>
     </div>
   );
