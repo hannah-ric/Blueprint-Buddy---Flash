@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "./lib/firebase";
 import { ChatInterface } from "./components/ChatInterface";
-import { ThreeDViewer } from "./components/ThreeDViewer";
 import { PlanDetails } from "./components/PlanDetails";
 import { Auth } from "./components/Auth";
 import { ProjectHistory } from "./components/ProjectHistory";
@@ -11,12 +10,14 @@ import { EmptyState } from "./components/EmptyState";
 import { Banner } from "./components/Banner";
 import { BuildPlan, ChatMessage } from "./types";
 import { generateBuildPlan } from "./services/gemini";
-import { Hammer, Layout, Boxes, History, ChevronLeft, PanelLeftClose, PanelLeftOpen, Undo2, Redo2 } from "lucide-react";
+import { Hammer, Layout, Boxes, History, ChevronLeft, PanelLeftClose, PanelLeftOpen, Undo2, Redo2, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "./lib/utils";
 import { handleFirestoreError, OperationType } from "./lib/firestore-errors";
 import { prepareMessagesForServer } from "./lib/chat-context";
 import { loadSession, saveSession, clearSession } from "./lib/storage";
+
+const ThreeDViewer = lazy(() => import('./components/ThreeDViewer').then(m => ({ default: m.ThreeDViewer })));
 
 const MAX_HISTORY = 20;
 
@@ -35,6 +36,8 @@ export default function App() {
   const [experienceLevel, setExperienceLevel] = useState<string>("Intermediate");
   const [designStyle, setDesignStyle] = useState<string>("Mid-Century Modern");
   const [banner, setBanner] = useState<string | null>(null);
+  const [generationPhase, setGenerationPhase] = useState<string>('');
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const hasHydrated = useRef(false);
 
@@ -152,6 +155,12 @@ export default function App() {
     clearSession();
   }, []);
 
+  const handleStopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+  }, []);
+
   const handleSendMessage = async (content: string, imageData?: string, imageMimeType?: string) => {
     setMobileView("chat");
     if (!user) {
@@ -166,10 +175,27 @@ export default function App() {
     const newMessages: ChatMessage[] = [...messages, { role: "user", content, imageData, imageMimeType }];
     setMessages(newMessages);
     setIsLoading(true);
+    setGenerationPhase("Initializing...");
+
+    abortControllerRef.current = new AbortController();
 
     try {
       const payload = prepareMessagesForServer(newMessages);
-      const response = await generateBuildPlan(payload, experienceLevel, designStyle);
+      const response = await generateBuildPlan(
+        payload, 
+        experienceLevel, 
+        designStyle,
+        (event) => {
+          switch(event.phase) {
+            case 'thinking': setGenerationPhase('Researching...'); break;
+            case 'drafting': setGenerationPhase('Drafting plan...'); break;
+            case 'validating': setGenerationPhase('Validating...'); break;
+            case 'correcting': setGenerationPhase('Refining...'); break;
+            case 'done': setGenerationPhase('Ready'); break;
+          }
+        },
+        abortControllerRef.current.signal
+      );
 
       if (response.isClarifying) {
         setMessages((prev) => [...prev, { role: "model", content: response.message }]);
@@ -285,6 +311,8 @@ export default function App() {
                   messages={messages}
                   onSendMessage={handleSendMessage}
                   isLoading={isLoading}
+                  generationPhase={generationPhase}
+                  onStopGeneration={handleStopGeneration}
                   onViewPlan={() => setMobileView("plan")}
                   hasPlan={!!currentPlan}
                   className={cn(
@@ -365,7 +393,16 @@ export default function App() {
                     {currentPlan ? (
                       <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                         <div className="w-full md:w-1/2 h-1/2 md:h-full border-b md:border-b-0 md:border-r border-[#141414] relative">
-                          <ThreeDViewer name={currentPlan.name} parts={currentPlan.modelParts} activeParts={activeStepParts} />
+                          <Suspense fallback={
+                            <div className="w-full h-full flex items-center justify-center bg-[#E4E3E0]">
+                              <div className="flex flex-col items-center gap-2 text-[#141414]/50">
+                                <Loader2 className="w-6 h-6 animate-spin" />
+                                <span className="font-mono text-xs uppercase tracking-widest">Loading 3D Engine...</span>
+                              </div>
+                            </div>
+                          }>
+                            <ThreeDViewer name={currentPlan.name} parts={currentPlan.modelParts} activeParts={activeStepParts} />
+                          </Suspense>
                         </div>
                         <PlanDetails
                           plan={currentPlan}

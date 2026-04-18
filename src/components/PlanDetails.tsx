@@ -1,5 +1,5 @@
 import { BuildPlan } from "../types";
-import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2, Image as ImageIcon } from "lucide-react";
+import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2, Image as ImageIcon, AlertTriangle } from "lucide-react";
 import Markdown from "react-markdown";
 import { motion } from "motion/react";
 import { useState, useEffect } from "react";
@@ -153,6 +153,25 @@ ${plan.instructions.map((step, i) => {
       className="flex-1 flex flex-col bg-[#E4E3E0]"
     >
       <div className="flex-1 overflow-y-auto p-6 md:p-10 space-y-16">
+        {plan.warnings && plan.warnings.length > 0 && (
+          <details className="group border border-[#141414] bg-yellow-50/50 p-4 open:bg-yellow-100/50 transition-colors">
+            <summary className="flex items-center gap-2 cursor-pointer font-mono text-xs uppercase tracking-widest text-[#141414] list-none">
+              <AlertTriangle size={14} className="text-yellow-600" />
+              <span>Validator Notes ({plan.warnings.length})</span>
+              <span className="ml-auto text-xs opacity-50 group-open:hidden">Show</span>
+              <span className="ml-auto text-xs opacity-50 hidden group-open:inline">Hide</span>
+            </summary>
+            <div className="mt-4 border-t border-[#141414]/10 pt-4 space-y-2">
+              {plan.warnings.map((warning, idx) => (
+                <div key={idx} className="flex gap-2 text-sm text-[#141414]/80">
+                  <span className="opacity-50 font-mono">{idx + 1}.</span>
+                  <p>{warning}</p>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
         <section className="space-y-6">
         <div className="flex flex-col md:flex-row md:items-end justify-between border-b border-[#141414] pb-4 gap-4">
           <h2 className="text-4xl font-light serif italic text-[#141414] tracking-tight">Specifications</h2>

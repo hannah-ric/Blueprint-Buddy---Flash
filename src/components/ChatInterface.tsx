@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Loader2, User, Bot, Layout, ImagePlus, X } from "lucide-react";
+import { Send, Loader2, User, Bot, Layout, ImagePlus, X, Square } from "lucide-react";
 import { motion } from "motion/react";
 import Markdown from "react-markdown";
 import { cn } from "../lib/utils";
@@ -16,6 +16,8 @@ interface ChatInterfaceProps {
   setExperienceLevel: (level: string) => void;
   designStyle: string;
   setDesignStyle: (style: string) => void;
+  generationPhase?: string;
+  onStopGeneration?: () => void;
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB — server limit is 10MB raw, leave headroom for base64 overhead
@@ -32,7 +34,20 @@ const STYLES = [
   "Custom/Mixed"
 ];
 
-export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, hasPlan, className, experienceLevel, setExperienceLevel, designStyle, setDesignStyle }: ChatInterfaceProps) {
+export function ChatInterface({ 
+  onSendMessage, 
+  messages, 
+  isLoading, 
+  onViewPlan, 
+  hasPlan, 
+  className, 
+  experienceLevel, 
+  setExperienceLevel, 
+  designStyle, 
+  setDesignStyle,
+  generationPhase,
+  onStopGeneration
+}: ChatInterfaceProps) {
   const [input, setInput] = useState("");
   // We store the already-read data URL so submission doesn't need a second FileReader pass.
   const [imagePreview, setImagePreview] = useState<{ dataUrl: string; mimeType: string } | null>(null);
@@ -161,11 +176,23 @@ export function ChatInterface({ onSendMessage, messages, isLoading, onViewPlan, 
             <div className="w-8 h-8 border border-[#141414] bg-[#E4E3E0] text-[#141414] flex items-center justify-center">
               <Bot size={14} strokeWidth={2} aria-hidden="true" />
             </div>
-            <div className="bg-[#E4E3E0] border border-[#141414] p-3 flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-[#141414]" aria-hidden="true" />
-              <span className="text-[10px] font-mono uppercase tracking-widest text-[#141414]/70">
-                Thinking… this can take up to a minute
-              </span>
+            <div className="bg-[#E4E3E0] border border-[#141414] p-3 flex items-center justify-between gap-2 w-full max-w-[280px]">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-[#141414]" aria-hidden="true" />
+                <span className="text-[10px] font-mono uppercase tracking-widest text-[#141414]/70">
+                  {generationPhase || "Thinking..."}
+                </span>
+              </div>
+              {onStopGeneration && (
+                <button
+                  type="button"
+                  onClick={onStopGeneration}
+                  aria-label="Stop generation"
+                  className="p-1 hover:bg-[#141414]/10 transition-colors rounded-none"
+                >
+                  <Square size={12} className="fill-current text-[#141414]" />
+                </button>
+              )}
             </div>
           </motion.div>
         )}

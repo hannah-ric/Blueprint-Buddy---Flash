@@ -51,55 +51,100 @@ async function fetchWithRetry(
   throw lastError || new Error("Request failed after retries");
 }
 
-export async function generateBuildPlan(messages: ChatMessage[], experienceLevel: string, designStyle: string) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 150000); // 150s timeout
+export interface GenerateProgressEvent {
+  phase: 'thinking' | 'drafting' | 'validating' | 'correcting' | 'done';
+  plan?: any;
+  message?: string;
+  isClarifying?: boolean;
+}
+
+export async function generateBuildPlan(
+  messages: ChatMessage[], 
+  experienceLevel: string, 
+  designStyle: string,
+  onProgress?: (event: GenerateProgressEvent) => void,
+  signal?: AbortSignal
+) {
+  let fallbackController: AbortController | null = null;
+  if (!signal) {
+    fallbackController = new AbortController();
+    signal = fallbackController.signal;
+  }
+
+  const response = await fetchWithRetry("/api/generate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      messages,
+      experienceLevel,
+      designStyle
+    }),
+    signal
+  });
+
+  if (!response.ok) {
+    let errorMessage = "Failed to generate plan";
+    const statusCode = response.status;
+    try {
+      const error = await response.json();
+      errorMessage = error.error || errorMessage;
+    } catch {
+      // Fallback if response is not JSON
+    }
+    const err = new Error(errorMessage);
+    (err as Error & { statusCode: number }).statusCode = statusCode;
+    throw err;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Stream not supported by browser");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
 
   try {
-    const response = await fetchWithRetry("/api/generate", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        messages,
-        experienceLevel,
-        designStyle
-      }),
-      signal: controller.signal
-    });
-
-    if (!response.ok) {
-      let errorMessage = "Failed to generate plan";
-      const statusCode = response.status;
-      try {
-        const error = await response.json();
-        errorMessage = error.error || errorMessage;
-      } catch {
-        // Fallback if response is not JSON
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      let newlineIdx;
+      
+      while ((newlineIdx = buffer.indexOf('\n\n')) >= 0) {
+        const chunk = buffer.slice(0, newlineIdx);
+        buffer = buffer.slice(newlineIdx + 2);
+        
+        if (chunk.startsWith('data: ')) {
+          const dataStr = chunk.slice(6);
+          try {
+            const event = JSON.parse(dataStr);
+            if (event.error) {
+              throw new Error(event.error);
+            }
+            if (onProgress) {
+              onProgress(event as GenerateProgressEvent);
+            }
+            if (event.phase === 'done') {
+              return event;
+            }
+          } catch(e) {
+            if (e instanceof Error && e.message.startsWith('{')) {
+              // Ignore invalid JSON issues that aren't explicit API errors
+              continue;
+            }
+            if (e instanceof Error && e.message !== "Unexpected string in JSON at position") {
+              throw e;
+            }
+          }
+        }
       }
-      const err = new Error(errorMessage);
-      (err as Error & { statusCode: number }).statusCode = statusCode;
-      throw err;
-    }
-
-    let text = "";
-    try {
-      text = await response.text();
-      return JSON.parse(text);
-    } catch (e) {
-      const contentType = response.headers.get("content-type");
-      if (contentType && contentType.includes("text/html")) {
-        throw new Error("The server is still starting up. Please wait a few seconds and try again.", { cause: e });
-      }
-      throw new Error(`Invalid response format from server. Received: ${text.substring(0, 200)}`, { cause: e });
     }
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error("Request timed out. The design is taking longer than expected. Please try again.", { cause: error });
+      throw new Error("Generation was stopped by the user.", { cause: error });
     }
     throw error;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }

@@ -312,6 +312,21 @@ async function startServer() {
       return;
     }
 
+    // Set SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const sendEvent = (phase: string, data: any = {}) => {
+      res.write(`data: ${JSON.stringify({ phase, ...data })}\n\n`);
+    };
+
+    let streamAborted = false;
+    req.on("close", () => {
+      streamAborted = true;
+    });
+
     const ai = new GoogleGenAI({ apiKey });
     const kb = await getKnowledgeBase();
 
@@ -332,35 +347,45 @@ async function startServer() {
         return { role: msg.role, parts };
       });
 
-      // AbortController for timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout
+      sendEvent('thinking');
 
-      let response;
-      try {
-        response = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
-          contents,
-          config: {
-            systemInstruction: buildSystemPrompt(experienceLevel, designStyle),
-            responseMimeType: "application/json",
-            responseSchema: responseSchema,
-            thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
-          },
-        });
-      } finally {
-        clearTimeout(timeoutId);
+      let responseText = "";
+      let draftingStarted = false;
+
+      const stream = await ai.models.generateContentStream({
+        model: "gemini-3.1-pro-preview",
+        contents,
+        config: {
+          systemInstruction: buildSystemPrompt(experienceLevel, designStyle, kb),
+          responseMimeType: "application/json",
+          responseSchema: responseSchema,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+        },
+      });
+
+      for await (const chunk of stream) {
+        if (streamAborted) return;
+        if (!draftingStarted) {
+          sendEvent('drafting');
+          draftingStarted = true;
+        }
+        responseText += chunk.text;
       }
 
-      const responseData = JSON.parse(response.text);
+      if (streamAborted) return;
+      
+      const responseData = JSON.parse(responseText);
       
       if (responseData.isClarifying) {
-        res.json(responseData);
+        sendEvent('done', responseData);
+        res.end();
         return;
       }
 
       let planData = responseData.plan;
-      const systemPrompt = buildSystemPrompt(experienceLevel, designStyle);
+      const systemPrompt = buildSystemPrompt(experienceLevel, designStyle, kb);
+
+      sendEvent('validating');
 
       // Validate the plan
       let validation = validatePlan(planData);
@@ -368,36 +393,39 @@ async function startServer() {
       // Auto-retry once if there are errors
       if (validation.errors.length > 0) {
         console.log("Plan validation failed, retrying with corrections:", validation.errors);
+        sendEvent('correcting');
+        
         const correctionMessage = `Your previous response had these issues that need fixing:\n${validation.errors.map((e) => `- ${e}`).join("\n")}\n${validation.warnings.length > 0 ? `\nWarnings:\n${validation.warnings.map((w) => `- ${w}`).join("\n")}` : ""}\n\nPlease regenerate the plan with these issues corrected.`;
 
         const retryContents: Content[] = [
           ...contents,
-          { role: "model", parts: [{ text: response.text }] },
+          { role: "model", parts: [{ text: responseText }] },
           { role: "user", parts: [{ text: correctionMessage }] },
         ];
 
-        const retryController = new AbortController();
-        const retryTimeoutId = setTimeout(() => retryController.abort(), 120000);
+        let retryResponseText = "";
+        const retryStream = await ai.models.generateContentStream({
+          model: "gemini-3.1-pro-preview",
+          contents: retryContents,
+          config: {
+            systemInstruction: systemPrompt,
+            responseMimeType: "application/json",
+            responseSchema: responseSchema,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+          },
+        });
 
-        let retryResponse;
-        try {
-          retryResponse = await ai.models.generateContent({
-            model: "gemini-3.1-pro-preview",
-            contents: retryContents,
-            config: {
-              systemInstruction: systemPrompt,
-              responseMimeType: "application/json",
-              responseSchema: responseSchema,
-              thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
-            },
-          });
-        } finally {
-          clearTimeout(retryTimeoutId);
+        for await (const chunk of retryStream) {
+          if (streamAborted) return;
+          retryResponseText += chunk.text;
         }
 
-        const retryData = JSON.parse(retryResponse.text);
+        if (streamAborted) return;
+
+        const retryData = JSON.parse(retryResponseText);
         if (retryData.isClarifying) {
-          res.json(retryData);
+          sendEvent('done', retryData);
+          res.end();
           return;
         }
         planData = retryData.plan;
@@ -407,7 +435,7 @@ async function startServer() {
       // Include any remaining warnings in the response
       const allWarnings = [...validation.errors, ...validation.warnings];
 
-      res.json({
+      const finalPayload = {
         isClarifying: false,
         plan: {
           ...planData,
@@ -416,10 +444,18 @@ async function startServer() {
           warnings: allWarnings.length > 0 ? allWarnings : undefined,
           createdAt: new Date().toISOString(),
         }
-      });
+      };
+
+      sendEvent('done', finalPayload);
+      res.end();
     } catch (error) {
       console.error("Gemini API error:", error);
-      next(error);
+      if (!res.headersSent) {
+        next(error);
+      } else {
+        res.write(`data: ${JSON.stringify({ error: error instanceof Error ? error.message : "Internal Server Error" })}\n\n`);
+        res.end();
+      }
     }
   });
 
