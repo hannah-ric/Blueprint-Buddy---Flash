@@ -3,7 +3,7 @@ import { User } from "firebase/auth";
 import { deleteDoc, doc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { Trash2, Hammer, Calendar } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { handleFirestoreError, OperationType } from "../lib/firestore-errors";
 
 interface ProjectHistoryProps {
@@ -11,15 +11,19 @@ interface ProjectHistoryProps {
   history: BuildPlan[];
   isLoading: boolean;
   onSelectPlan: (plan: BuildPlan) => void;
+  onError?: (message: string) => void;
 }
 
-export function ProjectHistory({ user, history, isLoading, onSelectPlan }: ProjectHistoryProps) {
+export function ProjectHistory({ user, history, isLoading, onSelectPlan, onError }: ProjectHistoryProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [error, setError] = useState<Error | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
-  if (error) {
-    throw error;
-  }
+  // Auto-cancel the "confirm delete" state after 3s.
+  useEffect(() => {
+    if (!pendingDeleteId) return;
+    const timer = setTimeout(() => setPendingDeleteId(null), 3000);
+    return () => clearTimeout(timer);
+  }, [pendingDeleteId]);
 
   if (!user) {
     return (
@@ -66,21 +70,19 @@ export function ProjectHistory({ user, history, isLoading, onSelectPlan }: Proje
 
   const handleDelete = async (e: React.MouseEvent, planId: string) => {
     e.stopPropagation();
-    if (deletingId === planId) {
-      try {
-        await deleteDoc(doc(db, "plans", planId));
-        setDeletingId(null);
-      } catch (err) {
-        try {
-          handleFirestoreError(err, OperationType.DELETE, `plans/${planId}`);
-        } catch (e) {
-          setError(e as Error);
-        }
-      }
-    } else {
-      setDeletingId(planId);
-      // Auto-cancel after 3 seconds
-      setTimeout(() => setDeletingId(null), 3000);
+    if (pendingDeleteId !== planId) {
+      setPendingDeleteId(planId);
+      return;
+    }
+    setDeletingId(planId);
+    setPendingDeleteId(null);
+    try {
+      await deleteDoc(doc(db, "plans", planId));
+    } catch (err) {
+      const msg = handleFirestoreError(err, OperationType.DELETE, `plans/${planId}`);
+      onError?.(msg);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -96,15 +98,18 @@ export function ProjectHistory({ user, history, isLoading, onSelectPlan }: Proje
             <div className="flex justify-between items-start mb-4">
               <h4 className="font-serif italic text-xl text-[#141414] line-clamp-2 pr-8">{plan.name}</h4>
               <button
+                type="button"
                 onClick={(e) => handleDelete(e, plan.id!)}
+                disabled={deletingId === plan.id}
+                aria-label={pendingDeleteId === plan.id ? "Confirm delete project" : "Delete project"}
                 className={`absolute top-4 right-4 p-2 border border-[#141414] transition-colors ${
-                  deletingId === plan.id 
-                    ? 'bg-red-500 text-white border-red-500' 
-                    : 'bg-[#E4E3E0] text-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] opacity-0 group-hover:opacity-100'
-                }`}
-                title={deletingId === plan.id ? "Click again to confirm" : "Delete project"}
+                  pendingDeleteId === plan.id
+                    ? 'bg-red-500 text-white border-red-500'
+                    : 'bg-[#E4E3E0] text-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+                } ${deletingId === plan.id ? 'opacity-50 cursor-wait' : ''}`}
+                title={pendingDeleteId === plan.id ? "Click again to confirm" : "Delete project"}
               >
-                <Trash2 size={16} strokeWidth={1.5} />
+                <Trash2 size={16} strokeWidth={1.5} aria-hidden="true" />
               </button>
             </div>
             
