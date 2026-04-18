@@ -91,6 +91,13 @@ function AnimatedPart({ part, isExploded, isActive, resetTrigger, showLabels, ma
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setManualPos(null);
+    const mesh = meshRef.current;
+    return () => {
+      // Explicit cleanup of the materials/geometries when unmounted
+      if (mesh && mesh.geometry) {
+        mesh.geometry.dispose();
+      }
+    }
   }, [isExploded, resetTrigger]);
 
   useFrame((_, delta) => {

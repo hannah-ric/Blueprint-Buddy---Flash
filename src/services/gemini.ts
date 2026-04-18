@@ -65,9 +65,8 @@ export async function generateBuildPlan(
   onProgress?: (event: GenerateProgressEvent) => void,
   signal?: AbortSignal
 ) {
-  let fallbackController: AbortController | null = null;
   if (!signal) {
-    fallbackController = new AbortController();
+    const fallbackController = new AbortController();
     signal = fallbackController.signal;
   }
 
@@ -118,32 +117,31 @@ export async function generateBuildPlan(
         
         if (chunk.startsWith('data: ')) {
           const dataStr = chunk.slice(6);
+          let event;
           try {
-            const event = JSON.parse(dataStr);
-            if (event.error) {
-              throw new Error(event.error);
-            }
-            if (onProgress) {
-              onProgress(event as GenerateProgressEvent);
-            }
-            if (event.phase === 'done') {
-              return event;
-            }
+            event = JSON.parse(dataStr);
           } catch(e) {
-            if (e instanceof Error && e.message.startsWith('{')) {
-              // Ignore invalid JSON issues that aren't explicit API errors
-              continue;
-            }
-            if (e instanceof Error && e.message !== "Unexpected string in JSON at position") {
-              throw e;
-            }
+            continue; // Ignore incomplete chunks
+          }
+          
+          if (event.error) {
+            throw new Error(event.error);
+          }
+          if (onProgress) {
+            onProgress(event as GenerateProgressEvent);
+          }
+          if (event.phase === 'done') {
+            return event;
           }
         }
       }
     }
+    throw new Error("Stream closed before completion");
   } catch (error: unknown) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error("Generation was stopped by the user.", { cause: error });
+    if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('Generation was stopped'))) {
+      const abortError = new Error("Generation was stopped by the user.");
+      abortError.name = "AbortError";
+      throw abortError;
     }
     throw error;
   }

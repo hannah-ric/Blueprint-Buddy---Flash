@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { User } from "firebase/auth";
 import { signIn, logOut } from "../lib/firebase";
 import { LogIn, LogOut } from "lucide-react";
@@ -7,19 +8,23 @@ interface AuthProps {
 }
 
 export function Auth({ user }: AuthProps) {
+  const [isError, setIsError] = useState(false);
+
   const handleSignIn = async () => {
+    setIsError(false);
     try {
       await signIn();
-    } catch (error) {
-      console.error("Error signing in:", error);
+    } catch (error: any) {
+      console.error("Sign-in error suppressed:", error?.code || error);
+      setIsError(true);
     }
   };
 
   const handleSignOut = async () => {
     try {
       await logOut();
-    } catch (error) {
-      console.error("Error signing out:", error);
+    } catch (error: any) {
+      console.error("Sign-out error suppressed:", error?.code || error);
     }
   };
 
@@ -46,14 +51,19 @@ export function Auth({ user }: AuthProps) {
   }
 
   return (
-    <button
-      type="button"
-      onClick={handleSignIn}
-      aria-label="Sign in with Google"
-      className="flex items-center gap-2 px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-xs font-mono uppercase tracking-wider hover:bg-[#141414]/90 transition-colors border border-[#141414]"
-    >
-      <LogIn size={16} strokeWidth={1.5} aria-hidden="true" />
-      <span>Sign In</span>
-    </button>
+    <div className="flex items-center gap-3">
+      {isError && (
+        <span className="text-[10px] text-red-500 font-mono tracking-wider">Auth Failed</span>
+      )}
+      <button
+        type="button"
+        onClick={handleSignIn}
+        aria-label="Sign in with Google"
+        className="flex items-center gap-2 px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-xs font-mono uppercase tracking-wider hover:bg-[#141414]/90 transition-colors border border-[#141414]"
+      >
+        <LogIn size={16} strokeWidth={1.5} aria-hidden="true" />
+        <span>Sign In</span>
+      </button>
+    </div>
   );
 }

@@ -204,14 +204,6 @@ export default function App() {
 
   const handleSendMessage = async (content: string, imageData?: string, imageMimeType?: string) => {
     setMobileView("chat");
-    if (!user) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "user", content },
-        { role: "model", content: "Please sign in to generate build plans." },
-      ]);
-      return;
-    }
 
     const newMessages: ChatMessage[] = [...messages, { role: "user", content, imageData, imageMimeType }];
     setMessages(newMessages);
@@ -247,33 +239,40 @@ export default function App() {
           ...prev,
           {
             role: "model",
-            content: `I've generated a build plan for your ${plan.name}. You can see the details and 3D preview now.`,
+            content: `I've generated a build plan for your ${plan.name}. You can see the details and 3D preview now.` + (!user ? ` Sign in to save this design to your history for later.` : ''),
             hasPlan: true,
             planData: JSON.stringify(plan),
           },
         ]);
 
-        // Persist to Firestore. Failures are non-fatal — the plan is still
+        // Persist to Firestore if user is authenticated. Failures are non-fatal — the plan is still
         // usable locally and the user sees a banner. We capture the new doc id
         // so downstream features (author notes, step reactions) can update the
         // same document.
-        try {
-          const docRef = await addDoc(collection(db, "plans"), {
-            ...plan,
-            userId: user.uid,
-            createdAt: serverTimestamp(),
-          });
-          setCurrentPlan((prev) => (prev && !prev.id ? { ...prev, id: docRef.id } : prev));
-          setPlanVersions((prev) => ({
-            ...prev,
-            stack: prev.stack.map((p) => (p === plan && !p.id ? { ...p, id: docRef.id } : p)),
-          }));
-        } catch (dbError) {
-          const msg = handleFirestoreError(dbError, OperationType.CREATE, "plans");
-          setBanner(msg);
+        if (user) {
+          try {
+            const docRef = await addDoc(collection(db, "plans"), {
+              ...plan,
+              userId: user.uid,
+              createdAt: serverTimestamp(),
+            });
+            setCurrentPlan((prev) => (prev && !prev.id ? { ...prev, id: docRef.id } : prev));
+            setPlanVersions((prev) => ({
+              ...prev,
+              stack: prev.stack.map((p) => (p === plan && !p.id ? { ...p, id: docRef.id } : p)),
+            }));
+          } catch (dbError) {
+            const msg = handleFirestoreError(dbError, OperationType.CREATE, "plans");
+            setBanner(msg);
+          }
         }
       }
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        setIsLoading(false);
+        setGenerationPhase("");
+        return; // Silently swallow abort errors
+      }
       console.error("Plan generation failed:", error);
       const friendly =
         error instanceof Error && error.message

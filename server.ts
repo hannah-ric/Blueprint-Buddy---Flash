@@ -22,8 +22,12 @@ try {
   if (fs.existsSync('./firebase-applet-config.json')) {
     const configStr = fs.readFileSync('./firebase-applet-config.json', 'utf-8');
     const firebaseConfig = JSON.parse(configStr);
-    const firebaseApp = initializeApp(firebaseConfig);
-    db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+    if (firebaseConfig.projectId && firebaseConfig.projectId !== "your-project-id") {
+      const firebaseApp = initializeApp(firebaseConfig);
+      db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+    } else {
+      console.warn("firebase-applet-config.json contains dummy credentials (your-project-id). Database will be disabled.");
+    }
   } else {
     console.warn("firebase-applet-config.json not found. Knowledge base will not be loaded.");
   }
@@ -32,9 +36,14 @@ try {
 }
 
 let knowledgeBaseCache: any = null;
+let knowledgeBaseCacheTime: number = 0;
+const KB_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 async function getKnowledgeBase() {
-  if (knowledgeBaseCache) return knowledgeBaseCache;
+  const now = Date.now();
+  if (knowledgeBaseCache && (now - knowledgeBaseCacheTime < KB_CACHE_TTL)) {
+    return knowledgeBaseCache;
+  }
   if (!db) return null;
   
   try {
@@ -55,6 +64,7 @@ async function getKnowledgeBase() {
       furniture_styles: stylesDoc.data()?.data || [],
       ergonomics: ergoDoc.data()?.data || []
     };
+    knowledgeBaseCacheTime = now;
     return knowledgeBaseCache;
   } catch (error) {
     console.error("Failed to fetch knowledge base:", error);
@@ -254,7 +264,12 @@ Before finalizing your output, you MUST verify the following:
 
 async function startServer() {
   const app = express();
+  
+  // Security: Trust front-facing proxies for accurate IP Rate Limiting.
+  // Set to 1 to implicitly trust the reverse proxy (Nginx) chain in this environment.
+  // This prevents blanket rate-limit blocks if relying on internal LB IPs.
   app.set('trust proxy', 1);
+  
   const PORT = 3000;
 
   app.use(express.json({ limit: "10mb" }));
@@ -323,8 +338,10 @@ async function startServer() {
     };
 
     let streamAborted = false;
+    const requestAbortController = new AbortController();
     req.on("close", () => {
       streamAborted = true;
+      requestAbortController.abort();
     });
 
     const ai = new GoogleGenAI({ apiKey });
@@ -390,9 +407,10 @@ async function startServer() {
       // Validate the plan
       let validation = validatePlan(planData);
 
-      // Auto-retry once if there are errors
-      if (validation.errors.length > 0) {
-        console.log("Plan validation failed, retrying with corrections:", validation.errors);
+      // Auto-retry once if there are errors or warnings
+      const hasIssues = validation.errors.length > 0 || validation.warnings.length > 0;
+      if (hasIssues) {
+        console.log("Plan validation found issues, retrying with corrections");
         sendEvent('correcting');
         
         const correctionMessage = `Your previous response had these issues that need fixing:\n${validation.errors.map((e) => `- ${e}`).join("\n")}\n${validation.warnings.length > 0 ? `\nWarnings:\n${validation.warnings.map((w) => `- ${w}`).join("\n")}` : ""}\n\nPlease regenerate the plan with these issues corrected.`;
@@ -432,16 +450,12 @@ async function startServer() {
         validation = validatePlan(planData);
       }
 
-      // Include any remaining warnings in the response
-      const allWarnings = [...validation.errors, ...validation.warnings];
-
       const finalPayload = {
         isClarifying: false,
         plan: {
           ...planData,
           experienceLevel,
           designStyle,
-          warnings: allWarnings.length > 0 ? allWarnings : undefined,
           createdAt: new Date().toISOString(),
         }
       };
@@ -503,31 +517,22 @@ Visual Details: ${prompt}.
 Style: White background, clean lines, instructional manual style (like IKEA), isometric view. 
 CRITICAL: Show ONLY the parts being assembled in this specific step. Do NOT show the fully completed furniture unless this is the final step. Highlight the active parts being attached right now. Make it look like a technical diagram.`;
 
-      const imageResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [{ text: fullPrompt }]
-        },
+      const imageResponse = await ai.models.generateImages({
+        model: 'imagen-3.0-generate-002',
+        prompt: fullPrompt,
         config: {
-          imageConfig: {
-            aspectRatio: '1:1',
-          },
+          numberOfImages: 1,
+          aspectRatio: '1:1',
+          outputMimeType: 'image/jpeg',
         },
       });
       
       let base64 = null;
       let mimeType = 'image/jpeg';
       
-      if (imageResponse.candidates && imageResponse.candidates.length > 0) {
-        for (const part of imageResponse.candidates[0].content.parts) {
-          if (part.inlineData) {
-            base64 = part.inlineData.data;
-            if (part.inlineData.mimeType) {
-              mimeType = part.inlineData.mimeType;
-            }
-            break;
-          }
-        }
+      if (imageResponse.generatedImages && imageResponse.generatedImages.length > 0) {
+        base64 = imageResponse.generatedImages[0].image.imageBytes;
+        mimeType = imageResponse.generatedImages[0].image.mimeType || 'image/jpeg';
       }
 
       if (base64) {

@@ -59,7 +59,6 @@ export interface BuildPlan {
   bom: BOMItem[];
   instructions: (InstructionStep | string)[];
   modelParts?: ModelPart[];
-  warnings?: string[];
   createdAt: string;
   // Author-private feedback fields. Visible only to the owning user.
   authorNotes?: string;
