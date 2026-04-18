@@ -1,8 +1,28 @@
-import { BuildPlan } from "../types";
-import { Download, FileText, Package, Wrench, Lightbulb, Send, Loader2, Image as ImageIcon, AlertTriangle } from "lucide-react";
+import { BuildPlan, StepReaction, PlanIssueFlag } from "../types";
+import {
+  Download,
+  FileText,
+  Package,
+  Wrench,
+  Lightbulb,
+  Send,
+  Loader2,
+  Image as ImageIcon,
+  AlertTriangle,
+  Check,
+  SkipForward,
+  Flag,
+  StickyNote,
+  X,
+  Plus,
+  CheckCircle2,
+} from "lucide-react";
 import Markdown from "react-markdown";
 import { motion } from "motion/react";
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { cn } from "../lib/utils";
+import { updatePlanFields } from "../lib/plan-updates";
+import { useDebouncedCallback } from "../lib/use-debounced";
 
 function StepImage({ prompt, stepIndex, planName, stepText }: { prompt: string, stepIndex: number, planName: string, stepText: string }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -75,8 +95,113 @@ interface PlanDetailsProps {
   onStepHover?: (parts: string[] | null) => void;
 }
 
+type SaveState = "idle" | "saving" | "saved" | "error";
+
 export function PlanDetails({ plan, onSendMessage, isLoading, onStepHover }: PlanDetailsProps) {
   const [input, setInput] = useState("");
+
+  // Author-private feedback state. Local copies let us render immediately and
+  // debounce writes back to Firestore.
+  const [notesDraft, setNotesDraft] = useState<string>(plan.authorNotes ?? "");
+  const [reactions, setReactions] = useState<Record<string, StepReaction>>(plan.stepReactions ?? {});
+  const [issueFlags, setIssueFlags] = useState<PlanIssueFlag[]>(plan.issueFlags ?? []);
+  const [notesSaveState, setNotesSaveState] = useState<SaveState>("idle");
+  const [isIssueOpen, setIsIssueOpen] = useState(false);
+  const [issueText, setIssueText] = useState("");
+  const [issueSaving, setIssueSaving] = useState(false);
+  const [issueError, setIssueError] = useState<string | null>(null);
+
+  // When the plan switches (different id: undo/redo across versions, history
+  // selection, new plan) reset local state from the incoming plan. We don't
+  // depend on the feedback fields themselves so Firestore echoes from our own
+  // saves don't clobber in-progress edits.
+  useEffect(() => {
+    setNotesDraft(plan.authorNotes ?? "");
+    setReactions(plan.stepReactions ?? {});
+    setIssueFlags(plan.issueFlags ?? []);
+    setNotesSaveState("idle");
+    setIsIssueOpen(false);
+    setIssueText("");
+    setIssueError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan.id]);
+
+  const canPersist = Boolean(plan.id);
+
+  const saveNotes = useCallback(
+    async (value: string) => {
+      if (!plan.id) return;
+      setNotesSaveState("saving");
+      const err = await updatePlanFields(plan.id, { authorNotes: value || undefined });
+      setNotesSaveState(err ? "error" : "saved");
+    },
+    [plan.id]
+  );
+  const debouncedSaveNotes = useDebouncedCallback((value: unknown) => {
+    saveNotes(value as string);
+  }, 700);
+
+  const handleNotesChange = (value: string) => {
+    setNotesDraft(value);
+    setNotesSaveState("saving");
+    debouncedSaveNotes(value);
+  };
+
+  const toggleReaction = useCallback(
+    async (stepIndex: number, reaction: StepReaction) => {
+      if (!plan.id) return;
+      setReactions((prev) => {
+        const key = String(stepIndex);
+        const next = { ...prev };
+        if (next[key] === reaction) {
+          delete next[key];
+        } else {
+          next[key] = reaction;
+        }
+        // Fire-and-forget Firestore update. Errors surface via console; this is
+        // author-private polish, not a blocking operation.
+        updatePlanFields(plan.id!, {
+          stepReactions: Object.keys(next).length ? next : undefined,
+        });
+        return next;
+      });
+    },
+    [plan.id]
+  );
+
+  const submitIssue = useCallback(async () => {
+    const trimmed = issueText.trim();
+    if (!trimmed || !plan.id) return;
+    setIssueSaving(true);
+    setIssueError(null);
+    const flag: PlanIssueFlag = { note: trimmed, createdAt: new Date().toISOString() };
+    const nextFlags = [...issueFlags, flag];
+    const err = await updatePlanFields(plan.id, { issueFlags: nextFlags });
+    if (err) {
+      setIssueError(err);
+    } else {
+      setIssueFlags(nextFlags);
+      setIssueText("");
+      setIsIssueOpen(false);
+    }
+    setIssueSaving(false);
+  }, [issueText, issueFlags, plan.id]);
+
+  const removeIssue = useCallback(
+    async (createdAt: string) => {
+      if (!plan.id) return;
+      const nextFlags = issueFlags.filter((f) => f.createdAt !== createdAt);
+      setIssueFlags(nextFlags);
+      await updatePlanFields(plan.id, { issueFlags: nextFlags.length ? nextFlags : undefined });
+    },
+    [issueFlags, plan.id]
+  );
+
+  const doneCount = useMemo(
+    () => Object.values(reactions).filter((r) => r === "done").length,
+    [reactions]
+  );
+  const totalSteps = plan.instructions?.length ?? 0;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -156,7 +281,7 @@ ${plan.instructions.map((step, i) => {
         {plan.warnings && plan.warnings.length > 0 && (
           <details className="group border border-[#141414] bg-yellow-50/50 p-4 open:bg-yellow-100/50 transition-colors">
             <summary className="flex items-center gap-2 cursor-pointer font-mono text-xs uppercase tracking-widest text-[#141414] list-none">
-              <AlertTriangle size={14} className="text-yellow-600" />
+              <AlertTriangle size={14} className="text-yellow-600" aria-hidden="true" />
               <span>Validator Notes ({plan.warnings.length})</span>
               <span className="ml-auto text-xs opacity-50 group-open:hidden">Show</span>
               <span className="ml-auto text-xs opacity-50 hidden group-open:inline">Hide</span>
@@ -170,6 +295,109 @@ ${plan.instructions.map((step, i) => {
               ))}
             </div>
           </details>
+        )}
+
+        {canPersist && (
+          <details className="group border border-[#141414] bg-[#E4E3E0] p-4 transition-colors">
+            <summary className="flex items-center gap-2 cursor-pointer font-mono text-xs uppercase tracking-widest text-[#141414] list-none">
+              <StickyNote size={14} aria-hidden="true" />
+              <span>My Notes</span>
+              {notesDraft && <span className="text-[#141414]/50 normal-case tracking-normal">— {notesDraft.length} chars</span>}
+              <span className="ml-auto text-[10px] opacity-60" aria-live="polite">
+                {notesSaveState === "saving" && "Saving…"}
+                {notesSaveState === "saved" && "Saved"}
+                {notesSaveState === "error" && "Save failed"}
+              </span>
+            </summary>
+            <div className="mt-4 border-t border-[#141414]/10 pt-4">
+              <label htmlFor="author-notes" className="sr-only">
+                Private notes about this plan
+              </label>
+              <textarea
+                id="author-notes"
+                value={notesDraft}
+                onChange={(e) => handleNotesChange(e.target.value)}
+                placeholder="Private notes — measurements you adjusted, materials you swapped, things to remember…"
+                className="w-full min-h-[120px] p-3 bg-[#E4E3E0] border border-[#141414] text-sm font-sans focus:outline-none focus:ring-1 focus:ring-[#141414] rounded-none resize-y placeholder:text-[#141414]/40"
+                maxLength={5000}
+              />
+              <p className="text-[10px] font-mono uppercase tracking-widest text-[#141414]/50 mt-2">
+                Only visible to you. Auto-saves as you type.
+              </p>
+            </div>
+          </details>
+        )}
+
+        {canPersist && (
+          <div className="border border-[#141414] bg-[#E4E3E0] p-4">
+            <div className="flex flex-wrap items-center gap-3 justify-between">
+              <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-[#141414]">
+                <Flag size={14} aria-hidden="true" />
+                <span>Issue Flags ({issueFlags.length})</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsIssueOpen((v) => !v)}
+                aria-expanded={isIssueOpen}
+                aria-label={isIssueOpen ? "Close issue form" : "Report a plan issue"}
+                className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest border border-[#141414] bg-[#E4E3E0] text-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+              >
+                {isIssueOpen ? <X size={12} aria-hidden="true" /> : <Plus size={12} aria-hidden="true" />}
+                {isIssueOpen ? "Cancel" : "Report issue"}
+              </button>
+            </div>
+            {issueFlags.length > 0 && (
+              <ul className="mt-4 border-t border-[#141414]/10 pt-4 space-y-2">
+                {issueFlags.map((f) => (
+                  <li key={f.createdAt} className="flex items-start gap-3 text-sm text-[#141414]/80">
+                    <span className="mt-0.5 text-[10px] font-mono uppercase tracking-widest text-[#141414]/50 shrink-0">
+                      {new Date(f.createdAt).toLocaleDateString()}
+                    </span>
+                    <p className="flex-1 whitespace-pre-wrap break-words">{f.note}</p>
+                    <button
+                      type="button"
+                      onClick={() => removeIssue(f.createdAt)}
+                      aria-label="Remove issue"
+                      className="p-1 opacity-50 hover:opacity-100 transition-opacity"
+                    >
+                      <X size={14} aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {isIssueOpen && (
+              <div className="mt-4 border-t border-[#141414]/10 pt-4 space-y-2">
+                <label htmlFor="issue-note" className="sr-only">
+                  Describe the issue
+                </label>
+                <textarea
+                  id="issue-note"
+                  value={issueText}
+                  onChange={(e) => setIssueText(e.target.value)}
+                  placeholder="What's wrong? e.g. 'Leg height is 4 inches too tall for a dining chair.'"
+                  className="w-full min-h-[80px] p-3 bg-[#E4E3E0] border border-[#141414] text-sm font-sans focus:outline-none focus:ring-1 focus:ring-[#141414] rounded-none resize-y placeholder:text-[#141414]/40"
+                  maxLength={1000}
+                />
+                {issueError && (
+                  <p role="alert" className="text-[10px] font-mono uppercase tracking-widest text-red-700">
+                    {issueError}
+                  </p>
+                )}
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={submitIssue}
+                    disabled={!issueText.trim() || issueSaving}
+                    className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest border border-[#141414] bg-[#141414] text-[#E4E3E0] hover:bg-[#141414]/90 disabled:opacity-40 transition-colors"
+                  >
+                    {issueSaving ? <Loader2 size={12} className="animate-spin" aria-hidden="true" /> : <Check size={12} aria-hidden="true" />}
+                    Save issue
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         <section className="space-y-6">
@@ -292,9 +520,19 @@ ${plan.instructions.map((step, i) => {
       </section>
 
       <section className="space-y-8">
-        <div className="flex items-center gap-3">
-          <Wrench className="text-[#141414]" size={20} strokeWidth={1.5} />
-          <h3 className="text-2xl font-light serif italic text-[#141414]">Assembly Instructions</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Wrench className="text-[#141414]" size={20} strokeWidth={1.5} aria-hidden="true" />
+            <h3 className="text-2xl font-light serif italic text-[#141414]">Assembly Instructions</h3>
+          </div>
+          {canPersist && totalSteps > 0 && (
+            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-[#141414]/60">
+              <CheckCircle2 size={12} aria-hidden="true" />
+              <span aria-label={`${doneCount} of ${totalSteps} steps done`}>
+                {doneCount} / {totalSteps} done
+              </span>
+            </div>
+          )}
         </div>
         <div className="space-y-12" onMouseLeave={() => onStepHover?.(null)}>
           {plan.instructions.map((step, i) => {
@@ -302,25 +540,71 @@ ${plan.instructions.map((step, i) => {
             const text = isString ? step : step.text;
             const activeParts = isString ? null : step.activeParts;
             const imagePrompt = isString ? null : step.imagePrompt;
-            
+            const reaction = reactions[String(i)];
+
             return (
-              <div 
-                key={i} 
-                className="flex flex-col md:flex-row gap-8 group cursor-default border-t border-[#141414]/20 pt-8 first:border-0 first:pt-0"
+              <div
+                key={i}
+                className={cn(
+                  "flex flex-col md:flex-row gap-8 group cursor-default border-t border-[#141414]/20 pt-8 first:border-0 first:pt-0",
+                  reaction === "done" && "opacity-60",
+                  reaction === "skip" && "opacity-40"
+                )}
                 onMouseEnter={() => onStepHover?.(activeParts || null)}
               >
                 <div className="flex gap-6 flex-1">
-                  <div className="shrink-0 w-12 h-12 border border-[#141414] flex items-center justify-center text-lg font-serif italic text-[#141414] group-hover:bg-[#141414] group-hover:text-[#E4E3E0] transition-all">
-                    {String(i + 1).padStart(2, '0')}
+                  <div className={cn(
+                    "shrink-0 w-12 h-12 border border-[#141414] flex items-center justify-center text-lg font-serif italic text-[#141414] group-hover:bg-[#141414] group-hover:text-[#E4E3E0] transition-all",
+                    reaction === "done" && "bg-[#141414] text-[#E4E3E0]",
+                    reaction === "issue" && "bg-yellow-100 text-[#141414] border-yellow-700"
+                  )}>
+                    {reaction === "done" ? (
+                      <Check size={18} strokeWidth={2} aria-hidden="true" />
+                    ) : reaction === "issue" ? (
+                      <AlertTriangle size={16} strokeWidth={2} aria-hidden="true" />
+                    ) : (
+                      String(i + 1).padStart(2, '0')
+                    )}
                   </div>
                   <div className="space-y-4 flex-1">
-                    <p className="text-[#141414]/80 leading-relaxed pt-1 group-hover:text-[#141414] transition-colors text-base">{text}</p>
+                    <p className={cn(
+                      "text-[#141414]/80 leading-relaxed pt-1 group-hover:text-[#141414] transition-colors text-base",
+                      reaction === "done" && "line-through decoration-[#141414]/50"
+                    )}>
+                      {text}
+                    </p>
                     {activeParts && activeParts.length > 0 && (
                       <div className="flex flex-wrap gap-2 pt-2">
                         {activeParts.map((part, idx) => (
                           <span key={idx} className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest border border-[#141414] font-mono">
                             {part}
                           </span>
+                        ))}
+                      </div>
+                    )}
+                    {canPersist && (
+                      <div className="flex flex-wrap gap-2 pt-2" role="group" aria-label={`Mark step ${i + 1}`}>
+                        {([
+                          { key: "done", label: "Done", icon: Check },
+                          { key: "skip", label: "Skip", icon: SkipForward },
+                          { key: "issue", label: "Issue", icon: AlertTriangle },
+                        ] as const).map(({ key, label, icon: Icon }) => (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => toggleReaction(i, key)}
+                            aria-pressed={reaction === key}
+                            aria-label={`Mark step ${i + 1} ${label.toLowerCase()}`}
+                            className={cn(
+                              "flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-widest border transition-colors",
+                              reaction === key
+                                ? "bg-[#141414] text-[#E4E3E0] border-[#141414]"
+                                : "bg-[#E4E3E0] text-[#141414]/70 border-[#141414]/40 hover:border-[#141414] hover:text-[#141414]"
+                            )}
+                          >
+                            <Icon size={11} strokeWidth={1.8} aria-hidden="true" />
+                            {label}
+                          </button>
                         ))}
                       </div>
                     )}

@@ -16,6 +16,7 @@ import { cn } from "./lib/utils";
 import { handleFirestoreError, OperationType } from "./lib/firestore-errors";
 import { prepareMessagesForServer } from "./lib/chat-context";
 import { loadSession, saveSession, clearSession } from "./lib/storage";
+import { useKeyboardShortcuts } from "./lib/use-keyboard-shortcuts";
 
 const ThreeDViewer = lazy(() => import('./components/ThreeDViewer').then(m => ({ default: m.ThreeDViewer })));
 
@@ -161,6 +162,46 @@ export default function App() {
     }
   }, []);
 
+  useKeyboardShortcuts([
+    {
+      key: "k",
+      meta: true,
+      ignoreInputs: false,
+      handler: (e) => {
+        e.preventDefault();
+        const el = document.getElementById("chat-input") as HTMLInputElement | null;
+        el?.focus();
+      },
+    },
+    {
+      key: "z",
+      meta: true,
+      handler: (e) => {
+        if (!canUndo) return;
+        e.preventDefault();
+        handleUndo();
+      },
+    },
+    {
+      key: "z",
+      meta: true,
+      shift: true,
+      handler: (e) => {
+        if (!canRedo) return;
+        e.preventDefault();
+        handleRedo();
+      },
+    },
+    {
+      key: "Escape",
+      ignoreInputs: false,
+      handler: () => {
+        if (banner) setBanner(null);
+        else if (isLoading) handleStopGeneration();
+      },
+    },
+  ]);
+
   const handleSendMessage = async (content: string, imageData?: string, imageMimeType?: string) => {
     setMobileView("chat");
     if (!user) {
@@ -213,13 +254,20 @@ export default function App() {
         ]);
 
         // Persist to Firestore. Failures are non-fatal — the plan is still
-        // usable locally and the user sees a banner.
+        // usable locally and the user sees a banner. We capture the new doc id
+        // so downstream features (author notes, step reactions) can update the
+        // same document.
         try {
-          await addDoc(collection(db, "plans"), {
+          const docRef = await addDoc(collection(db, "plans"), {
             ...plan,
             userId: user.uid,
             createdAt: serverTimestamp(),
           });
+          setCurrentPlan((prev) => (prev && !prev.id ? { ...prev, id: docRef.id } : prev));
+          setPlanVersions((prev) => ({
+            ...prev,
+            stack: prev.stack.map((p) => (p === plan && !p.id ? { ...p, id: docRef.id } : p)),
+          }));
         } catch (dbError) {
           const msg = handleFirestoreError(dbError, OperationType.CREATE, "plans");
           setBanner(msg);
@@ -244,6 +292,12 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0]">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:bg-[#141414] focus:text-[#E4E3E0] focus:px-3 focus:py-2 focus:text-xs focus:font-mono focus:uppercase focus:tracking-widest focus:border focus:border-[#E4E3E0]"
+      >
+        Skip to content
+      </a>
       <aside className="w-16 bg-[#141414] flex flex-col items-center py-6 gap-8 shrink-0 border-r border-[#141414]">
         <div className="w-10 h-10 bg-[#E4E3E0] rounded-none flex items-center justify-center text-[#141414] shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)]">
           <Hammer size={20} strokeWidth={1.5} aria-hidden="true" />
@@ -294,7 +348,7 @@ export default function App() {
         </nav>
       </aside>
 
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main id="main-content" className="flex-1 flex flex-col overflow-hidden">
         <Banner message={banner} onDismiss={() => setBanner(null)} />
         <div className="flex-1 flex overflow-hidden">
           <AnimatePresence mode="wait">

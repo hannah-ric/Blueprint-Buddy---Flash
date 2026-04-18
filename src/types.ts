@@ -35,6 +35,13 @@ export interface InstructionStep {
   imagePrompt?: string;
 }
 
+export type StepReaction = "done" | "skip" | "issue";
+
+export interface PlanIssueFlag {
+  note: string;
+  createdAt: string;
+}
+
 export interface BuildPlan {
   id?: string;
   name: string;
@@ -54,6 +61,10 @@ export interface BuildPlan {
   modelParts?: ModelPart[];
   warnings?: string[];
   createdAt: string;
+  // Author-private feedback fields. Visible only to the owning user.
+  authorNotes?: string;
+  stepReactions?: Record<string, StepReaction>;
+  issueFlags?: PlanIssueFlag[];
 }
 
 export interface ChatMessage {
