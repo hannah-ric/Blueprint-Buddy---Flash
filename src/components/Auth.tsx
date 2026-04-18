@@ -33,11 +33,13 @@ export function Auth({ user }: AuthProps) {
           <span className="text-xs font-mono text-[#141414] hidden md:inline-block">{user.displayName || user.email}</span>
         </div>
         <button
+          type="button"
           onClick={handleSignOut}
+          aria-label="Sign out"
           className="p-1.5 text-[#141414] hover:bg-[#141414]/10 transition-colors border border-transparent hover:border-[#141414]"
           title="Sign Out"
         >
-          <LogOut size={16} strokeWidth={1.5} />
+          <LogOut size={16} strokeWidth={1.5} aria-hidden="true" />
         </button>
       </div>
     );
@@ -45,10 +47,12 @@ export function Auth({ user }: AuthProps) {
 
   return (
     <button
+      type="button"
       onClick={handleSignIn}
+      aria-label="Sign in with Google"
       className="flex items-center gap-2 px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-xs font-mono uppercase tracking-wider hover:bg-[#141414]/90 transition-colors border border-[#141414]"
     >
-      <LogIn size={16} strokeWidth={1.5} />
+      <LogIn size={16} strokeWidth={1.5} aria-hidden="true" />
       <span>Sign In</span>
     </button>
   );

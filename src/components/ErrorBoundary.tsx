@@ -13,7 +13,7 @@ interface State {
 export class ErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
-    error: null
+    error: null,
   };
 
   public static getDerivedStateFromError(error: Error): State {
@@ -24,25 +24,25 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("Uncaught error:", error, errorInfo);
   }
 
-  public render() {
+  public render(): React.ReactNode {
     if (this.state.hasError) {
-      const errorMessage = "We encountered an unexpected error while processing your request. Please try refreshing the page or starting a new project.";
-
       return (
-        <div className="flex h-screen w-full items-center justify-center bg-gray-50 p-6">
-          <div className="max-w-md bg-white p-8 rounded-2xl shadow-sm border border-red-100 text-center">
-            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
-              <Hammer className="text-red-500" size={28} />
+        <div className="flex h-screen w-full items-center justify-center bg-[#E4E3E0] text-[#141414] font-sans p-6">
+          <div className="max-w-md w-full border border-[#141414] bg-[#E4E3E0] p-8 shadow-[8px_8px_0px_0px_rgba(20,20,20,1)]">
+            <div className="w-14 h-14 border border-[#141414] bg-[#141414] text-[#E4E3E0] flex items-center justify-center mb-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,0.3)]">
+              <Hammer size={22} strokeWidth={1.5} aria-hidden="true" />
             </div>
-            <h2 className="text-2xl font-serif italic text-gray-900 mb-4">Something went wrong</h2>
-            <p className="text-gray-500 text-sm mb-6">
-              {errorMessage}
+            <p className="text-[10px] uppercase tracking-[0.2em] font-mono text-[#141414]/60 mb-2">Error</p>
+            <h2 className="text-2xl font-light serif italic text-[#141414] mb-4">Something went wrong</h2>
+            <p className="text-sm text-[#141414]/70 leading-relaxed mb-6">
+              The app hit an unexpected error. Reload the page to continue. Your saved projects are safe.
             </p>
             <button
+              type="button"
               onClick={() => window.location.reload()}
-              className="px-6 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
+              className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-mono uppercase tracking-[0.15em] border border-[#141414] hover:bg-[#141414]/90 transition-colors"
             >
-              Refresh Page
+              Reload Page
             </button>
           </div>
         </div>
