@@ -30,9 +30,35 @@ function StepImage({ prompt, stepIndex, planName, stepText }: { prompt: string, 
   const [error, setError] = useState(false);
 
   useEffect(() => {
+    let active = true;
     setImageUrl(null);
     setError(false);
-  }, [prompt]);
+
+    if (prompt) {
+      const autoGenerate = async () => {
+        setIsLoading(true);
+        try {
+          const res = await fetch('/api/generate-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt, planName, stepText })
+          });
+          if (!res.ok) throw new Error('Failed to generate');
+          const data = await res.json();
+          if (active && data.imageUrl) {
+            setImageUrl(data.imageUrl);
+          }
+        } catch {
+          if (active) setError(true);
+        } finally {
+          if (active) setIsLoading(false);
+        }
+      };
+      autoGenerate();
+    }
+
+    return () => { active = false; };
+  }, [prompt, planName, stepText]);
 
   const handleGenerate = async () => {
     setIsLoading(true);
